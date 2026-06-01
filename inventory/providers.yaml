@@ -1,0 +1,370 @@
+# CFS Provider Inventory
+# Total providers: 16 — 7 anon(live) + 7 auth(live) + mswep(rclone) + em_earth(S3 cred-gated).
+# 14 LIVE-VERIFIED (anon+CDS+Earthdata); mswep offline-verified (needs rclone+GloH2O access).
+#
+# Canonical schema: cfs.core.vocabulary (canonical-v1)
+# Connectors return a bbox+time subset as a canonical xarray.Dataset and STOP.
+# HRU remapping and model-specific forcing schemas are the consumer's job.
+
+- slug: era5_arco
+  name: ECMWF ERA5 (ARCO / Google Cloud)
+  protocol: zarr
+  base_url: gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3
+  resolution_deg: 0.25
+  grid: regular
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: hourly
+  license: "Copernicus / ECMWF licence (free, attribution)"
+  citation: "Hersbach et al. (2020), ERA5; ARCO-ERA5, Google/ECMWF."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - dewpoint_temperature
+    - eastward_wind
+    - northward_wind
+    - surface_air_pressure
+    - precipitation_flux
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+  status: implemented
+
+- slug: aorc
+  name: NOAA AORC v1.1 (1 km, hourly)
+  protocol: zarr
+  base_url: s3://noaa-nws-aorc-v1-1-1km
+  resolution_deg: 0.00833
+  grid: regular
+  auth: anonymous
+  bbox: [-130.0, 20.0, -60.0, 53.0]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA NWS Analysis of Record for Calibration (AORC) v1.1."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - precipitation_flux
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+  status: implemented
+
+- slug: chirps
+  name: CHIRPS v2.0 daily precipitation (0.05°)
+  protocol: http
+  base_url: https://data.chc.ucsb.edu/products/CHIRPS-2.0
+  resolution_deg: 0.05
+  grid: regular
+  auth: anonymous
+  bbox: [-180.0, -50.0, 180.0, 50.0]
+  temporal_resolution: daily
+  license: "CHIRPS provided without restriction (CHG/UCSB)."
+  citation: "Funk et al. (2015), CHIRPS, Scientific Data 2:150066."
+  products: 1
+  canonical_variables:
+    - precipitation_flux
+  note: "whole-year NetCDFs downloaded to cache then subset; fetch is not lazy"
+  status: implemented
+
+- slug: era5_land
+  name: ECMWF ERA5-Land (0.1°, hourly, via CDS)
+  protocol: cds_api
+  base_url: https://cds.climate.copernicus.eu/api
+  resolution_deg: 0.1
+  grid: regular
+  auth: cds_api  # ~/.cdsapirc or CDSAPI_URL/CDSAPI_KEY
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: hourly
+  license: "Copernicus / ECMWF licence (free, attribution; accept on CDS)."
+  citation: "Muñoz-Sabater et al. (2021), ERA5-Land, ESSD 13:4349-4383."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - dewpoint_temperature
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - precipitation_flux                    # daily-reset accumulation -> de-accumulated
+    - surface_downwelling_shortwave_flux    # de-accumulated
+    - surface_downwelling_longwave_flux     # de-accumulated
+  note: "CDS area param does the spatial subset; tp/ssrd/strd de-accumulated. LIVE-VERIFIED (1h chunk-pad fixes the 00:00 daily-total de-accum edge case; SW 664 W/m2, QC clean)."
+  status: implemented
+
+- slug: carra
+  name: CARRA — Copernicus Arctic Regional Reanalysis (2.5 km, via CDS)
+  protocol: cds_api
+  base_url: https://cds.climate.copernicus.eu/api
+  resolution_deg: 0.025
+  grid: regular            # interpolated to 0.025° via CDS grid param
+  auth: cds_api
+  bbox: [-180.0, 55.0, 180.0, 90.0]
+  temporal_resolution: 3hourly
+  domain: west_domain      # or east_domain via config={'domain': ...}
+  license: "Copernicus / ECMWF licence (free, attribution; accept on CDS)."
+  citation: "C3S, CARRA — Arctic Regional Reanalysis."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - eastward_wind
+    - northward_wind
+    - surface_air_pressure
+    - specific_humidity                     # DERIVED from 2m RH (Bolton/Magnus)
+    - precipitation_flux                    # forecast stream, 1-h accum -> /3600
+    - surface_downwelling_shortwave_flux    # forecast stream -> /3600
+    - surface_downwelling_longwave_flux     # forecast stream -> /3600
+  note: "Dual analysis+forecast streams merged; RH->q derived. LIVE-VERIFIED (Greenland west_domain; T 276K, q 0.0024 derived, QC clean). CDS request limited to requested day-range (not whole month)."
+  status: implemented
+
+- slug: cerra
+  name: CERRA — Copernicus European Regional Reanalysis (5.5 km, via CDS)
+  protocol: cds_api
+  base_url: https://cds.climate.copernicus.eu/api
+  resolution_deg: 0.05
+  grid: regular            # interpolated to 0.05° via CDS grid param
+  auth: cds_api
+  bbox: [-58.0, 20.0, 74.0, 74.0]
+  temporal_resolution: 3hourly
+  license: "Copernicus / ECMWF licence (free, attribution; accept on CDS)."
+  citation: "C3S, CERRA — European Regional Reanalysis."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - wind_speed                            # CERRA gives combined 10m wind speed
+    - surface_air_pressure
+    - specific_humidity                     # DERIVED from 2m RH
+    - precipitation_flux                    # forecast stream -> /3600
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+  note: "Like CARRA but data_type=reanalysis, no domain, wind_speed (si10) not u/v. LIVE-VERIFIED (Alps; T 283K, wind 1.5, q 0.0069 derived, QC clean)."
+  status: implemented
+
+- slug: merra2
+  name: NASA MERRA-2 (0.5°×0.625°, hourly, via OPeNDAP)
+  protocol: opendap
+  base_url: https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2
+  resolution_deg: 0.5
+  grid: regular            # latitude descending
+  auth: earthdata          # EARTHDATA_TOKEN / ~/.netrc / EARTHDATA_USERNAME+PASSWORD
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: hourly
+  license: "NASA public data (open)."
+  citation: "Gelaro et al. (2017), MERRA-2, J. Climate 30:5419-5454."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # all identity — MERRA-2 is native SI
+    - surface_air_pressure
+    - specific_humidity
+    - eastward_wind
+    - northward_wind
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+    - precipitation_flux                    # PRECTOTCORR, already kg m-2 s-1
+  note: "Merges SLV+RAD+FLX collections (daily OPeNDAP files). All native SI (identity). LIVE-VERIFIED."
+  status: implemented
+
+- slug: nldas
+  name: NLDAS-2 (0.125°, hourly, via OPeNDAP)
+  protocol: opendap
+  base_url: https://hydro1.gesdisc.eosdis.nasa.gov/opendap/NLDAS/NLDAS_FORA0125_H.2.0
+  resolution_deg: 0.125
+  grid: regular            # ascending lat, signed lon, CONUS
+  auth: earthdata
+  bbox: [-125.0, 25.0, -67.0, 53.0]
+  temporal_resolution: hourly
+  license: "NASA public data (open)."
+  citation: "Xia et al. (2012), NLDAS-2, JGR Atmospheres 117:D03109."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - surface_downwelling_longwave_flux
+    - surface_downwelling_shortwave_flux
+    - precipitation_flux                    # Rainf hourly accum (kg m-2) -> /3600
+  note: "ONE OPeNDAP file PER HOUR — slow for long ranges (warned). Vars are CF names Tair/Qair/PSurf/Wind_E/Wind_N/LWdown/SWdown/Rainf (probe-corrected from GRIB names). LIVE-VERIFIED."
+  status: implemented
+
+- slug: gpm
+  name: GPM IMERG Final daily precipitation (0.1°, via OPeNDAP)
+  protocol: opendap
+  base_url: https://gpm1.gesdisc.eosdis.nasa.gov/opendap/GPM_L3/GPM_3IMERGDF.07
+  resolution_deg: 0.1
+  grid: regular            # subset by label; orientation normalized to time,lat,lon
+  auth: earthdata
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: daily
+  license: "NASA public data (open)."
+  citation: "Huffman et al. (2023), GPM IMERG V07, NASA GES DISC."
+  products: 1
+  canonical_variables:
+    - precipitation_flux                    # IMERG daily mm/day -> /86400
+  note: "Final run only (DF). path /{year}/{month}/ (probe-corrected from doy). Detects precipitation/precipitationCal; handles (time,lon,lat) orientation. LIVE-VERIFIED (precip 1.5e-4)."
+  status: implemented
+
+- slug: daymet
+  name: Daymet V4R1 (1 km daily, North America, via OPeNDAP)
+  protocol: opendap
+  base_url: https://opendap.earthdata.nasa.gov/collections/C2532426483-ORNL_CLOUD/granules
+  resolution_deg: 0.009
+  grid: lcc_xy             # 1-D x/y metres + 2-D lat/lon; subset via pyproj bbox->LCC
+  auth: earthdata
+  bbox: [-179.0, 14.0, -52.0, 83.0]
+  temporal_resolution: daily
+  license: "ORNL DAAC / NASA (open)."
+  citation: "Thornton et al. (2022), Daymet V4R1, ORNL DAAC."
+  products: 1
+  canonical_variables:                      # all DERIVED (Daymet lacks direct fields)
+    - air_temperature                       # (tmax+tmin)/2 + 273.15
+    - dewpoint_temperature                  # inverse-Magnus(vp)
+    - precipitation_flux                    # prcp[mm/day] / 86400
+    - surface_downwelling_shortwave_flux    # srad * dayl / 86400
+  note: "per-var-per-year OPeNDAP. WORKAROUND: DAP constraint '?{var},time,x,y,lat,lon' skips time_bnds (xarray pydap backend errors on it). No wind/pressure/longwave/q (q needs pressure->elevation=attribute). pyproj in earthdata extra. LIVE-VERIFIED (T 284.6, Td<T)."
+  status: implemented
+
+- slug: rdrs
+  name: RDRS / CaSR v3.2 (Canadian Surface Reanalysis, ~10 km, hourly)
+  protocol: opendap
+  base_url: https://pavics.ouranos.ca/.../1hr_NAM_GovCan_CaSR_v32_198001-202412.ncml
+  resolution_deg: 0.09
+  grid: rotated_pole_2d    # 2-D lat/lon over rlat/rlon; subset via cfs.subset.grid2d
+  auth: anonymous
+  bbox: [-180.0, 10.0, 180.0, 85.0]
+  temporal_resolution: hourly
+  license: "Environment and Climate Change Canada (open data)."
+  citation: "ECCC, Canadian Surface Reanalysis (CaSR) v3.2 / RDRS."
+  products: 1
+  canonical_variables:                      # CaSR v3.2 is CF + SI → all identity
+    - air_temperature                       # tas
+    - dewpoint_temperature                  # tdps
+    - specific_humidity                     # huss (direct — no RH derivation)
+    - surface_air_pressure                  # ps
+    - eastward_wind                         # uas
+    - northward_wind                        # vas
+    - surface_downwelling_shortwave_flux    # rsds
+    - surface_downwelling_longwave_flux     # rlds
+    - precipitation_flux                    # pr (already kg m-2 s-1)
+  note: "Var names probe-confirmed. LIVE-VERIFIED (anonymous OPeNDAP NCML; open is slow ~2min)."
+  status: implemented
+
+- slug: conus404
+  name: CONUS404 (4 km WRF reanalysis, hourly)
+  protocol: zarr
+  base_url: s3://hytest/conus404/conus404_hourly.zarr   # OSN endpoint usgs.osn.mghpcc.org
+  resolution_deg: 0.036
+  grid: lcc_2d             # 2-D lat/lon over y/x; subset via cfs.subset.grid2d
+  auth: anonymous
+  bbox: [-134.0, 21.0, -60.0, 53.0]
+  temporal_resolution: hourly
+  license: "USGS/NCAR (public)."
+  citation: "Rasmussen et al. (2023), CONUS404; USGS HyTEST."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # T2
+    - dewpoint_temperature                  # TD2
+    - specific_humidity                     # Q2
+    - surface_air_pressure                  # PSFC
+    - eastward_wind                         # U10
+    - northward_wind                        # V10
+    - surface_downwelling_shortwave_flux    # ACSWDNB (since-start accum -> de-accum /3600)
+    - surface_downwelling_longwave_flux     # ACLWDNB (since-start accum -> de-accum /3600)
+    - precipitation_flux                    # PREC_ACC_NC (1-h bucket mm -> linear /3600)
+  note: "Var names probe-confirmed. Radiation de-accumulated with 1-h pad; precip is per-bucket (linear). LIVE-VERIFIED (anonymous OSN Zarr)."
+  status: implemented
+
+- slug: hrrr
+  name: NOAA HRRR analysis (3 km, hourly)
+  protocol: zarr
+  base_url: s3://hrrrzarr/sfc
+  resolution_deg: 0.027
+  grid: lcc_2d             # lat/lon loaded from hrrrzarr/grid/HRRR_chunk_index.zarr
+  auth: anonymous
+  bbox: [-134.1, 21.1, -60.9, 52.6]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA NCEP High-Resolution Rapid Refresh (HRRR); hrrrzarr archive."
+  products: 1
+  canonical_variables:                      # all instantaneous SI → identity
+    - air_temperature                       # TMP @ 2m_above_ground
+    - dewpoint_temperature                  # DPT @ 2m_above_ground
+    - specific_humidity                     # SPFH @ 2m_above_ground
+    - surface_air_pressure                  # PRES @ surface
+    - eastward_wind                         # UGRD @ 10m_above_ground
+    - northward_wind                        # VGRD @ 10m_above_ground
+    - surface_downwelling_shortwave_flux    # DSWRF @ surface
+    - surface_downwelling_longwave_flux     # DLWRF @ surface
+  note: "hrrrzarr = one zarr group PER VAR PER HOUR with NO lat/lon; grid lat/lon loaded once from grid/HRRR_chunk_index.zarr, window applied per group. NO precip in analysis. Per-var-per-hour opens slow for long ranges. LIVE-VERIFIED."
+  status: implemented
+
+- slug: nex_gddp
+  name: NASA NEX-GDDP-CMIP6 (0.25° daily downscaled CMIP6 projections)
+  protocol: s3_direct
+  base_url: s3://nex-gddp-cmip6/NEX-GDDP-CMIP6
+  resolution_deg: 0.25
+  grid: regular            # lon 0-360 (handled); lazy h5netcdf over s3fs
+  auth: anonymous
+  bbox: [-180.0, -60.0, 180.0, 90.0]
+  temporal_resolution: daily
+  license: "NASA NEX (open); cite source CMIP6 model + NEX-GDDP."
+  citation: "Thrasher et al. (2022), NEX-GDDP-CMIP6, Scientific Data 9:262."
+  products: 5              # one per scenario: historical, ssp126/245/370/585
+  model_member: "config knobs (default ACCESS-CM2 / r1i1p1f1); full native catalogue reachable"
+  canonical_variables:     # all CF/SI -> identity
+    - air_temperature                       # tas
+    - precipitation_flux                    # pr (already kg m-2 s-1)
+    - specific_humidity                     # huss
+    - wind_speed                            # sfcWind
+    - surface_downwelling_shortwave_flux    # rsds
+    - surface_downwelling_longwave_flux     # rlds
+  note: "FIRST PROJECTION connector. scenario=product-id, model/member=config; recorded in provenance + ds.attrs (cmip6_model/scenario/member). Dir-listing resolves grid-label (gn/gr/gr1) + _v2.0 correction per year. LIVE-VERIFIED (hist 2010 T283 vs ssp585 2090 T290 — warming signal)."
+  status: implemented
+
+- slug: mswep
+  name: MSWEP (Multi-Source Weighted-Ensemble Precipitation, 0.1°)
+  protocol: rclone            # Google Drive shared folder via rclone CLI
+  base_url: gdrive://MSWEP (rclone --drive-shared-with-me)
+  resolution_deg: 0.1
+  grid: regular
+  auth: rclone_gdrive         # needs rclone installed + GloH2O-granted Drive access
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: daily/3hourly
+  version_remote: "config knobs (version default V300; remote default GoogleDrive / MSWEP_RCLONE_REMOTE env)"
+  license: "MSWEP — free for research after GloH2O registration."
+  citation: "Beck et al. (2019), MSWEP V2, BAMS 100:473-500."
+  products: 2                 # resolution=product-id: mswep:daily, mswep:3hourly
+  canonical_variables:
+    - precipitation_flux       # daily mm/day ->/86400 ; 3hourly mm/3hr ->/10800
+  note: "OUT-OF-BAND access: rclone cat --drive-shared-with-me streams per-step NetCDFs. OFFLINE-VERIFIED only (no rclone/access here); clear RegistrationRequiredError if rclone missing. Monthly resolution deferred (variable-length month = non-constant flux scale). New protocol mixin cfs.connectors.protocols.rclone."
+  status: implemented
+
+- slug: em_earth
+  name: EM-Earth (0.1° daily, global; AWS S3, credential-gated)
+  protocol: s3_direct
+  base_url: s3://emearth
+  resolution_deg: 0.1
+  grid: regular
+  auth: aws_credentials   # bucket allows anon LIST but DENIES anon GET (all regions)
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: daily
+  variant: "config knob deterministic(default)/probabilistic; anon config (default True)"
+  license: "EM-Earth (Tang et al. 2022); bucket access restricted."
+  citation: "Tang et al. (2022), EM-Earth, BAMS 103:E996-E1018."
+  products: 1
+  canonical_variables:
+    - air_temperature       # tmean C +273.15 (QC-protected)
+    - dewpoint_temperature  # tdew  C +273.15
+    - precipitation_flux    # prcp ASSUMED mm/day /86400 -- UNVERIFIED (always warns)
+  note: "BLOCKED for anon access (emearth bucket denies anon GET; needs AWS creds via config={'anon':False}). SYMFLUENCE's handler silently 403->'no data'. Precip units UNVERIFIED (can't read a file; QC can't catch a precip unit error) -> explicit FetchResult warning every fetch. Temperature QC-protected. Built credential-capable + clear RegistrationRequiredError on 403. NOT live-verifiable here."
+  status: implemented_blocked_access
+
+# ── Migration backlog (handlers to port from SYMFLUENCE) ───────────────
+# Each becomes a connector following the same acquire-and-subset contract.
+# Infra now available: cfs.subset.grid2d (2-D/projected grids),
+# cfs.subset.deaccumulate (reset-aware), cfs.connectors.protocols.cds_api.
+#
+# Anonymous, regular grid:
+#   em_earth (S3 NetCDF)  — BLOCKED: confirm prcp units (mm/day vs mm/h)
