@@ -11,6 +11,7 @@ import pytest
 xr = pytest.importorskip("xarray")
 
 from cfs.connectors.hrrr import _FIELDS, _MAPPINGS, HRRRConnector
+from cfs.core.exceptions import SubsetError
 from cfs.core.models import BoundingBox, TimeRange
 from cfs.core.registry import discover, list_providers
 from cfs.core.vocabulary import CanonicalVar
@@ -32,7 +33,7 @@ async def test_precip_request_rejected():
     conn = HRRRConnector()
     bbox = BoundingBox(min_lon=-105.0, min_lat=40.0, max_lon=-104.5, max_lat=40.4)
     tr = TimeRange(start=datetime(2022, 1, 1, 0), end=datetime(2022, 1, 1, 1))
-    with pytest.raises(Exception):
+    with pytest.raises(SubsetError):
         await conn.fetch("hrrr:sfc_anl", bbox, tr, variables=[CanonicalVar.PRECIPITATION_FLUX])
 
 

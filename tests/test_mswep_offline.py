@@ -11,7 +11,7 @@ import pytest
 xr = pytest.importorskip("xarray")
 
 from cfs.connectors.mswep import RESOLUTIONS, MSWEPConnector, _detect_precip
-from cfs.core.models import BoundingBox, TimeRange
+from cfs.core.models import TimeRange
 from cfs.core.registry import discover, list_providers
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.canonical import VariableMapping, harmonize
