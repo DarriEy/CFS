@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import netrc
 import os
+import re
 from urllib.parse import urlparse
 
 import requests
@@ -105,7 +106,17 @@ class EarthdataAuthMixin:
         return _URSSession(userpass=val)  # type: ignore[arg-type]
 
     def _open_opendap(self, url: str):
-        """Open an authenticated OPeNDAP endpoint as a lazy xarray Dataset."""
+        """Open an authenticated OPeNDAP endpoint as a lazy xarray Dataset.
+
+        Prefer DAP4: pydap >=3.5 warns that an ``http(s)://`` URL leaves it to
+        auto-detect the protocol and defaults to legacy DAP2, which is ~2x slower
+        on these stores. GES DISC Hyrax serves DAP4 on the *same* path, so we just
+        re-scheme the URL to ``dap4://`` (validated against GLDAS: identical
+        values, roughly half the wall-clock). If a host doesn't speak DAP4 we fall
+        back to the original DAP2 URL. (This Hyrax trick does NOT apply to THREDDS
+        TDS servers, which expose DAP4 under a different ``/thredds/dap4/`` path —
+        hence it lives here in the Earthdata/Hyrax mixin, not the anon helpers.)
+        """
         import xarray as xr
 
         try:
@@ -115,4 +126,10 @@ class EarthdataAuthMixin:
                 "Earthdata OPeNDAP access needs the 'earthdata' extra: "
                 "pip install -e '.[earthdata]' (pydap)"
             ) from e
-        return xr.open_dataset(url, engine="pydap", session=self._earthdata_session())
+
+        dap4_url = re.sub(r"^https?://", "dap4://", url)
+        try:
+            return xr.open_dataset(dap4_url, engine="pydap", session=self._earthdata_session())
+        except Exception as e:  # noqa: BLE001 - fall back to legacy DAP2 on any DAP4 failure
+            logger.debug("dap4 open failed, falling back to dap2", url=url, error=str(e))
+            return xr.open_dataset(url, engine="pydap", session=self._earthdata_session())
