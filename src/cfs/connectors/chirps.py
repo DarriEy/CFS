@@ -2,14 +2,17 @@
 # Copyright (C) 2024-2026 CFS Contributors
 """CHIRPS connector — Climate Hazards Group quasi-global daily precipitation.
 
-Migrated from SYMFLUENCE's CHIRPS handler. CHIRPS publishes one plain-HTTP
-NetCDF per year (no server-side subsetting), so this connector downloads the
-covering year file(s) to the CFS cache, subsets to bbox + time, harmonizes the
-``precip`` field (mm/day) to the canonical ``precipitation_flux`` (kg m-2 s-1),
+Migrated from SYMFLUENCE's CHIRPS handler. CHIRPS publishes one plain-HTTP NetCDF
+per year (a ~1.1 GB global file, no server-side subsetting). The files are
+chunked HDF5 (netCDF-4, ~20×112×400 over time×lat×lon) on a range-capable server,
+so this connector opens each covering year **lazily over HTTP byte-range** and
+reads only the chunks overlapping the bbox + time window — a basin-scale subset
+transfers a few MB instead of the whole 1.1 GB file. It then harmonizes the
+``precip`` field (mm/day) to the canonical ``precipitation_flux`` (kg m-2 s-1)
 and concatenates. A precip-only product → one canonical variable.
 
-Because whole-year globals are downloaded, fetches are ``lazy=False`` and best
-kept to a few years at a time.
+The subset itself is materialized (``lazy=False``), but no whole-year download
+happens — so the old "download the world to clip a basin" cost is gone.
 """
 
 from __future__ import annotations
@@ -105,15 +108,12 @@ class CHIRPSConnector(HTTPFilesMixin, BaseForcingConnector):
 
         def _piece(year):
             url = f"{CHG_BASE}/{DAILY_PATH}/{DAILY_FILE.format(year=year)}"
-            path = self._download_cached(url, DAILY_FILE.format(year=year))
-            ds = xr.open_dataset(path)
-            try:
-                plan = plan_bbox_subset(ds, bbox, lat_name="latitude", lon_name="longitude")
-                ds_sp = apply_bbox_subset(ds, plan, lat_name="latitude", lon_name="longitude")
-                ds_sp = ds_sp.sel(time=slice(time_range.start, time_range.end))
-                return ds_sp.load() if ds_sp.sizes.get("time", 0) > 0 else None
-            finally:
-                ds.close()
+            ds = self._open_http_lazy(url)
+            plan = plan_bbox_subset(ds, bbox, lat_name="latitude", lon_name="longitude")
+            ds_sp = apply_bbox_subset(ds, plan, lat_name="latitude", lon_name="longitude")
+            ds_sp = ds_sp.sel(time=slice(time_range.start, time_range.end))
+            # Materialize only the (small) overlapping chunks pulled over byte-range.
+            return ds_sp.load() if ds_sp.sizes.get("time", 0) > 0 else None
 
         pieces = await self._gather_pieces([lambda y=y: _piece(y) for y in years])
 
@@ -128,9 +128,8 @@ class CHIRPSConnector(HTTPFilesMixin, BaseForcingConnector):
             product=product,
             bbox=bbox,
             time_range=time_range,
-            provenance="CHIRPS v2.0 daily p05 HTTP NetCDF; downloaded+subset; canonical-v1",
+            provenance="CHIRPS v2.0 daily p05 HDF5; HTTP byte-range subset; canonical-v1",
             t0=t0,
             settings=settings,
             lazy=False,
-            extra_warnings=["whole-year files downloaded to cache; fetch is not lazy"],
         )

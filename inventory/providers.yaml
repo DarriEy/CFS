@@ -66,7 +66,7 @@
   products: 1
   canonical_variables:
     - precipitation_flux
-  note: "whole-year NetCDFs downloaded to cache then subset; fetch is not lazy"
+  note: "yearly 1.1 GB global HDF5 files opened lazily over HTTP byte-range (chunked ~20x112x400); only bbox+time chunks transfer — no whole-file download. LIVE-VERIFIED (India monsoon subset in ~4s)."
   status: implemented
 
 - slug: era5_land

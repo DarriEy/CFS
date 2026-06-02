@@ -51,8 +51,10 @@ class Settings(BaseSettings):
 
     # ── Local cache (for HTTP-download sources without server subsetting) ──
     cache_dir: str = "~/.cache/cfs"
-    """Where connectors that must download whole files (e.g. CHIRPS yearly
-    NetCDFs) cache them, to avoid re-downloading across fetches."""
+    """Where connectors that must download whole files (contiguous/netCDF-3 HTTP
+    sources, via HTTPFilesMixin._download_cached) cache them, to avoid
+    re-downloading across fetches. Range-capable HDF5 sources (CHIRPS) stream
+    only the needed chunks and never touch this."""
 
     # ── CORS / auth (off by default, like CAS) ──────────────────────
     cors_origins: Annotated[list[str], NoDecode] = ["*"]
