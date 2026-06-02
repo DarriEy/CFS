@@ -1,7 +1,7 @@
 # CFS Provider Inventory
-# Total providers: 32 — 30 live-verified + 2 offline/access-gated.
-# gfs: first FORECAST connector (global GFS, S3 GRIB2 byte-range via cfgrib).
-# Prior batch: chirts + persiann_cdr + fldas (all live-verified).
+# Total providers: 33 — 31 live-verified + 2 offline/access-gated.
+# Forecasts: gfs (deterministic) + gefs (ensemble, member dim) via S3 GRIB2
+# byte-range + cfgrib. gefs v1 is instantaneous-only (precip/radiation deferred).
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
@@ -705,6 +705,27 @@
     - surface_downwelling_shortwave_flux    # DSWRF surface (fcst-avg, absent at f000)
     - surface_downwelling_longwave_flux     # DLWRF surface (fcst-avg, absent at f000)
   note: "FIRST FORECAST connector. Herbie-style: reads the .idx byte index and HTTP byte-range fetches only the surface GRIB messages (~MB not ~1.5GB), decodes with cfgrib (forecast extra). Cycle = most recent 00/06/12/18Z <= start; valid time -> lead hour (1h to f120, 3h to f384). All identity SI. LIVE-VERIFIED (US: T 292-300 K, SW 80-228 W/m2, sp 92-94 kPa)."
+  status: implemented
+
+- slug: gefs
+  name: NOAA GEFS ensemble forecast (0.25 select, 3-hourly, global, via S3 GRIB2)
+  protocol: http
+  base_url: https://noaa-gefs-pds.s3.amazonaws.com
+  resolution_deg: 0.25
+  grid: regular            # 0-360 longitude, normalized on subset
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: 3hourly
+  variant: "config knob members (default control gec00 + gep01..gep30 = 31)"
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA NCEP Global Ensemble Forecast System (GEFS)."
+  products: 1
+  canonical_variables:
+    - air_temperature       # TMP 2 m (instantaneous, identity K)
+    - surface_air_pressure  # PRES surface
+    - eastward_wind         # UGRD 10 m
+    - northward_wind        # VGRD 10 m
+  note: "Ensemble companion to gfs (same .idx/byte-range/cfgrib machinery), pgrb2sp25 select product, returns a member dim. v1 = INSTANTANEOUS fields only; precip (APCP) + radiation (DSWRF/DLWRF) DEFERRED (6-hour accumulation/averaging buckets need reset-aware differencing); RH not specific humidity. LIVE-VERIFIED (2 members x 2 steps, member spread in T)."
   status: implemented
 
 # ── Migration backlog (handlers to port from SYMFLUENCE) ───────────────
