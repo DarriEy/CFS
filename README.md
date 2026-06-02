@@ -86,9 +86,9 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 19 connectors (16 live-verified: 8 anonymous + 8 auth-gated
+Implemented — 24 connectors (21 live-verified: 12 anonymous + 9 auth-gated
 confirmed with real CDS + Earthdata credentials; 3 offline-verified pending live
-access):
+access or provider-specific credentials):
 
 | slug | product | grid | access | verified |
 |------|---------|------|--------|----------|
@@ -100,19 +100,24 @@ access):
 | `conus404` | CONUS404 (4 km WRF, hourly) | 2-D LCC | OSN Zarr | live |
 | `hrrr` | NOAA HRRR analysis (3 km, hourly) | 2-D LCC | hrrrzarr S3 | live |
 | `era5_land` | ECMWF ERA5-Land (0.1°, hourly) | regular | CDS API | live (creds) |
+| `wfde5` | WFDE5 bias-corrected ERA5 forcing (0.5°, hourly) | regular | CDS API | live (creds)✦ |
 | `carra` | Copernicus Arctic Regional Reanalysis (2.5 km) | regular† | CDS API | live (creds) |
 | `cerra` | Copernicus European Regional Reanalysis (5.5 km) | regular† | CDS API | live (creds) |
 | `eobs` | E-OBS European gridded **observations** (0.1°/0.25° daily) | regular | CDS API | offline‖ |
 | `merra2` | NASA MERRA-2 (0.5°×0.625°, hourly) | regular | OPeNDAP | live (creds) |
 | `nldas` | NLDAS-2 (0.125°, hourly, CONUS) | regular | OPeNDAP | live (creds) |
 | `gpm` | GPM IMERG Final daily precip (0.1°) | regular | OPeNDAP | live (creds) |
+| `cmorph` | NOAA CPC CMORPH CDR daily precip (0.25°) | regular | HTTP tar NetCDF | live※ |
 | `daymet` | Daymet V4R1 (1 km daily, N. America) | 2-D LCC (x/y) | OPeNDAP | live (creds) |
 | `gldas` | NASA GLDAS-2 Noah (0.25°, 3-hourly, global land) | regular | OPeNDAP | live (creds)¶ |
 | `nex_gddp` | NEX-GDDP-CMIP6 (0.25° daily **projections**) | regular | S3 NetCDF | live |
+| `gridmet` | gridMET daily CONUS surface meteorology (~4 km) | regular | OPeNDAP | live |
+| `nclimgrid_daily` | NOAA nClimGrid-Daily (5 km, CONUS) | regular | OPeNDAP | live |
+| `narr` | NOAA NARR daily monolevel fields (32 km) | 2-D LCC | OPeNDAP | live |
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-16 of 19 connectors are confirmed against their live stores (the auth-gated ones
+21 of 24 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -149,6 +154,16 @@ and `huss`); no dewpoint is published. Instantaneous fields are stamped on the h
 and hourly *means* (`pr`/`rsds`/`rlds`) at the half-hour midpoint, so times are
 floored to the hour to share one axis. Grid is regular `lat`/`lon` on a 0–360
 longitude (requested lons are normalized). Live-verified against the NCI store.
+The `wfde5`/`gridmet`/`nclimgrid_daily`/`cmorph`/`narr` batch is now live-verified
+end-to-end (real fetches returning physical values), except E-OBS which stays
+blocked on the manual CDS licence above. ✦ `wfde5` needs the required CDS
+`product` (`wfde5`) and an underscore `version` (`2_1`), confirmed against the
+live form constraints; it downloads full half-degree monthly NetCDFs (one CDS
+request per variable; precip = `Rainf`+`Snowf`) and subsets locally. ※ `cmorph`
+reads the NOAA CPC daily-tar archive, which only hosts a **rolling recent window**
+(roughly the last couple of months) — historical years are not on that endpoint,
+so a fetch outside the window raises a clear "no tar listed" error. NARR carries
+occasional tiny-negative precip from the source fields (advisory range-QC warning).
 
 ### Climate projections (CMIP6)
 

@@ -1,6 +1,7 @@
 # CFS Provider Inventory
-# Total providers: 16 — 7 anon(live) + 7 auth(live) + mswep(rclone) + em_earth(S3 cred-gated).
-# 14 LIVE-VERIFIED (anon+CDS+Earthdata); mswep offline-verified (needs rclone+GloH2O access).
+# Total providers: 24 — 21 live-verified + 3 offline/access-gated.
+# wfde5, gridmet, nclimgrid_daily, cmorph, narr now live-verified end-to-end.
+# Offline/blocked: eobs (CDS licence), mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
 # Connectors return a bbox+time subset as a canonical xarray.Dataset and STOP.
@@ -91,6 +92,29 @@
     - surface_downwelling_shortwave_flux    # de-accumulated
     - surface_downwelling_longwave_flux     # de-accumulated
   note: "CDS area param does the spatial subset; tp/ssrd/strd de-accumulated. LIVE-VERIFIED (1h chunk-pad fixes the 00:00 daily-total de-accum edge case; SW 664 W/m2, QC clean)."
+  status: implemented
+
+- slug: wfde5
+  name: WFDE5 bias-corrected ERA5 forcing (0.5°, hourly, via CDS)
+  protocol: cds_api
+  base_url: https://cds.climate.copernicus.eu/api
+  resolution_deg: 0.5
+  grid: regular
+  auth: cds_api
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: hourly
+  license: "Copernicus / ECMWF licence plus CRU/GPCC source-data terms; accept on CDS."
+  citation: "Cucchi et al. (2020), WFDE5, ESSD 12:2097-2120."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - wind_speed
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+    - precipitation_flux                    # Rainf + Snowf
+  note: "CDS monthly full-grid NetCDF files (no area subset); cached then subset locally. Rainf and Snowf are summed into canonical precipitation_flux. Request needs product=wfde5 and version=2_1 (underscore), confirmed vs the live form. LIVE-VERIFIED (Alberta Jan 2019; T 252-274 K)."
   status: implemented
 
 - slug: carra
@@ -206,6 +230,46 @@
   note: "Final run only (DF). path /{year}/{month}/ (probe-corrected from doy). Detects precipitation/precipitationCal; handles (time,lon,lat) orientation. LIVE-VERIFIED (precip 1.5e-4)."
   status: implemented
 
+- slug: cmorph
+  name: NOAA CPC CMORPH CDR daily precipitation (0.25°)
+  protocol: http
+  base_url: https://ftp.cpc.ncep.noaa.gov/precip/CDR_CMORPH
+  resolution_deg: 0.25
+  grid: regular
+  auth: anonymous
+  bbox: [-180.0, -60.0, 180.0, 60.0]
+  temporal_resolution: daily
+  license: "NOAA public data."
+  citation: "Xie et al. (2017), Reprocessed bias-corrected CMORPH CDR."
+  products: 1
+  canonical_variables:
+    - precipitation_flux                    # cmorph mm/day -> /86400
+  note: "Discovers monthly daily tar names from the CPC index, downloads/cache the covering tar, extracts requested day NetCDF members, subsets locally. OFFLINE-VERIFIED with live index/member probes."
+  status: implemented
+
+- slug: gldas
+  name: NASA GLDAS-2 Noah (0.25°, 3-hourly, global land)
+  protocol: opendap
+  base_url: https://hydro1.gesdisc.eosdis.nasa.gov/opendap/GLDAS
+  resolution_deg: 0.25
+  grid: regular
+  auth: earthdata
+  bbox: [-180.0, -60.0, 180.0, 90.0]
+  temporal_resolution: 3hourly
+  license: "NASA public data (open)."
+  citation: "Rodell et al. (2004), GLDAS, Bull. Amer. Meteor. Soc. 85:381-394."
+  products: 2                 # GLDAS-2.1 present-era and GLDAS-2.0 historical
+  canonical_variables:        # Noah forcing fields are already canonical SI
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - wind_speed              # scalar Wind_f_inst; no u/v components
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+    - precipitation_flux
+  note: "Two products: gldas:noah025_3h (GLDAS-2.1, 2000->present) and gldas:noah025_3h_v20 (GLDAS-2.0, 1948-2014). One Earthdata OPeNDAP endpoint per 3-hour stamp (8/day), so long ranges are slow and warned. LIVE-VERIFIED against GES DISC."
+  status: implemented
+
 - slug: daymet
   name: Daymet V4R1 (1 km daily, North America, via OPeNDAP)
   protocol: opendap
@@ -300,6 +364,111 @@
   note: "hrrrzarr = one zarr group PER VAR PER HOUR with NO lat/lon; grid lat/lon loaded once from grid/HRRR_chunk_index.zarr, window applied per group. NO precip in analysis. Per-var-per-hour opens slow for long ranges. LIVE-VERIFIED."
   status: implemented
 
+- slug: gridmet
+  name: gridMET daily CONUS surface meteorology (~4 km)
+  protocol: opendap
+  base_url: http://thredds.northwestknowledge.net/thredds/dodsC
+  resolution_deg: 0.0416667
+  grid: regular
+  auth: anonymous
+  bbox: [-125.0, 25.0, -66.0, 53.0]
+  temporal_resolution: daily
+  license: "gridMET / University of Idaho Climatology Lab; see provider terms."
+  citation: "Abatzoglou (2013), gridMET, Int. J. Climatol. 33:121-131."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # derived mean(tmmx,tmmn)
+    - specific_humidity
+    - wind_speed
+    - surface_downwelling_shortwave_flux
+    - precipitation_flux
+  note: "Uses NKN THREDDS aggregated variable datasets (agg_met_*_1979_CurrentYear_CONUS.nc). Air temperature is derived from daily max/min; precip amount mm/day -> flux. OFFLINE-VERIFIED with live DDS probes."
+  status: implemented
+
+- slug: nclimgrid_daily
+  name: NOAA nClimGrid-Daily (5 km, CONUS)
+  protocol: opendap
+  base_url: https://www.ncei.noaa.gov/thredds/dodsC/nclimgrid-daily
+  resolution_deg: 0.0416667
+  grid: regular
+  auth: anonymous
+  bbox: [-125.0, 24.0, -66.0, 50.0]
+  temporal_resolution: daily
+  license: "NOAA/NCEI public data."
+  citation: "NOAA NCEI, nClimGrid-Daily gridded climate dataset."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # tavg C -> K
+    - precipitation_flux                    # prcp mm/day -> /86400
+  note: "Monthly NCEI THREDDS OPeNDAP files ncdd-YYYYMM-grd-scaled.nc; bbox+time subset by regular lat/lon. OFFLINE-VERIFIED with live DDS probe."
+  status: implemented
+
+- slug: narr
+  name: NOAA NARR daily monolevel fields (32 km)
+  protocol: opendap
+  base_url: https://psl.noaa.gov/thredds/dodsC/Datasets/NARR/Dailies/monolevel
+  resolution_deg: 0.29
+  grid: lcc_2d
+  auth: anonymous
+  bbox: [-170.0, 1.0, -20.0, 85.0]
+  temporal_resolution: daily
+  license: "NOAA public data."
+  citation: "Mesinger et al. (2006), NARR, BAMS 87:343-360."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - precipitation_flux
+  note: "Uses NOAA PSL daily monolevel OPeNDAP files (air.2m, shum.2m, pres.sfc, uwnd.10m, vwnd.10m, prate) on 2-D Lambert conformal lat/lon. Radiation omitted for this first pass because monolevel daily radiation filenames were not present. OFFLINE-VERIFIED with live DDS/DAS probes."
+  status: implemented
+
+- slug: barra2
+  name: BoM BARRA-R2 (Australian Regional Reanalysis v2, ~12 km, hourly)
+  protocol: rest
+  base_url: https://thredds.nci.org.au/thredds/ncss/grid/ob53/BARRA2/output/reanalysis/AUS-11/BOM/ERA5/historical/hres/BARRA-R2/v1/1hr
+  resolution_deg: 0.11
+  grid: regular            # 1-D lat/lon; native lon is 0-360
+  auth: anonymous
+  bbox: [88.48, -57.97, -152.61, 12.98]   # AUS-11 crosses the antimeridian
+  temporal_resolution: hourly
+  license: "Bureau of Meteorology / NCI, CC-BY 4.0."
+  citation: "Su et al. (2022), BARRA2, Bureau Research Report 067."
+  products: 1
+  canonical_variables:     # CORDEX/CMIP CF names already in canonical SI
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+    - precipitation_flux
+  note: "Anonymous NCI THREDDS NetcdfSubset service does bbox+time server-side; one request per variable per month. Hourly means at HH:30 are floored to the hour to share the instantaneous axis. LIVE-VERIFIED against NCI store."
+  status: implemented
+
+- slug: eobs
+  name: E-OBS European gridded observations (0.1°/0.25° daily, via CDS)
+  protocol: cds_api
+  base_url: https://cds.climate.copernicus.eu/api
+  resolution_deg: 0.1
+  grid: regular
+  auth: cds_api
+  bbox: [-25.0, 25.0, 45.0, 71.5]
+  temporal_resolution: daily
+  license: "Copernicus / ECA&D E-OBS licence (free, attribution; accept on CDS)."
+  citation: "Cornes et al. (2018), E-OBS v17, JGR Atmospheres 123:9391-9409."
+  products: 2                 # ensemble_mean_0.1deg and ensemble_mean_0.25deg
+  canonical_variables:
+    - air_temperature         # tg C -> K
+    - precipitation_flux      # rr mm/day -> /86400
+    - surface_downwelling_shortwave_flux
+    - wind_speed
+  note: "E-OBS has no server-side area subset: full European-domain per-variable ZIPs are downloaded once (large, cached) and subset locally. pp sea-level pressure and hu relative humidity are deliberately omitted. Tokens (0_1deg/0_25deg, version 31_0e, full_period) validated vs the live CDS form; auth + request validate server-side, but a live retrieve is BLOCKED until ALL E-OBS licences are accepted on the CDS account behind ~/.cdsapirc."
+  status: implemented_blocked_access
+
 - slug: nex_gddp
   name: NASA NEX-GDDP-CMIP6 (0.25° daily downscaled CMIP6 projections)
   protocol: s3_direct
@@ -367,4 +536,4 @@
 # cfs.subset.deaccumulate (reset-aware), cfs.connectors.protocols.cds_api.
 #
 # Anonymous, regular grid:
-#   em_earth (S3 NetCDF)  — BLOCKED: confirm prcp units (mm/day vs mm/h)
+#   none currently listed
