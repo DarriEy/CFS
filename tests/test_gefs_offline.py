@@ -11,16 +11,19 @@ xr = pytest.importorskip("xarray")
 
 from cfs.connectors.gefs import (
     _ALL_MEMBERS,
+    _DERIVED_Q,
     _FLUX_VARS,
     _INTERVAL_S,
     _MAPPINGS,
     _MAX_LEAD,
+    _Q_INPUTS,
     _VARS,
     _file_url,
     _lead_available,
 )
 from cfs.core.registry import discover, get_connector, list_providers
 from cfs.core.vocabulary import CanonicalVar
+from cfs.derive.humidity import specific_humidity_from_rh
 
 
 def test_registered():
@@ -75,17 +78,48 @@ def test_instantaneous_fields_identity():
 
 
 def test_flux_fields_offered():
-    # Precip + down radiation are now offered; specific humidity is still not (RH).
+    # Precip + down radiation are exposed as raw GRIB fields.
     flux_canon = {v[2] for v in _FLUX_VARS}
     assert flux_canon == {
         CanonicalVar.PRECIPITATION_FLUX,
         CanonicalVar.SHORTWAVE_RADIATION_DOWN,
         CanonicalVar.LONGWAVE_RADIATION_DOWN,
     }
+    # q is not a raw field — it is derived (see test_specific_humidity_*).
     assert CanonicalVar.SPECIFIC_HUMIDITY not in flux_canon | {v[2] for v in _VARS}
     # APCP accumulates, radiation averages.
     kinds = {v[0]: v[4] for v in _FLUX_VARS}
     assert kinds == {"APCP": "acc", "DSWRF": "ave", "DLWRF": "ave"}
+
+
+def test_specific_humidity_derivation_inputs():
+    # q is derived from RH + 2 m T + surface pressure; RH is an input-only field.
+    assert _Q_INPUTS == [
+        ("RH", "2 m above ground", "_rh2m"),
+        ("TMP", "2 m above ground", "_t2m"),
+        ("PRES", "surface", "_sp"),
+    ]
+    # T and P internals are shared with the exposed instantaneous fields.
+    inst_internals = {v[3] for v in _VARS}
+    assert {"_t2m", "_sp"} <= inst_internals
+    # RH itself has no canonical mapping (never exposed raw).
+    assert "_rh2m" not in {m.source_name for m in _MAPPINGS}
+
+
+async def test_specific_humidity_offered_in_product():
+    conn_cls = get_connector("gefs")
+    async with conn_cls() as conn:
+        (product,) = await conn.list_products()
+    canon = {pv.canonical for pv in product.variables}
+    assert CanonicalVar.SPECIFIC_HUMIDITY in canon
+    assert {pv.source_name for pv in product.variables if
+            pv.canonical == CanonicalVar.SPECIFIC_HUMIDITY} == {_DERIVED_Q}
+
+
+def test_specific_humidity_physical():
+    # Sanity on the derivation: 50% RH at 293.15 K, 101325 Pa → ~7 g/kg.
+    q = specific_humidity_from_rh(50.0, 293.15, 101325.0)
+    assert 0.005 < q < 0.009
 
 
 def test_apcp_scaled_to_flux_radiation_identity():

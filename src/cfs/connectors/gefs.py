@@ -30,8 +30,10 @@ prev`` for averages. ``APCP`` (kg m⁻² over the 3 h interval) is then divided 
 interval to a flux (kg m⁻² s⁻¹, matching ``gfs``'s ``PRATE``); de-averaged
 ``DSWRF``/``DLWRF`` are already W m⁻² (identity). All are absent at f000 (analysis).
 
-GEFS-select ships relative humidity (not specific humidity), so specific_humidity
-is not offered.
+GEFS-select ships relative humidity, not specific humidity, so specific_humidity is
+*derived* from 2 m ``RH`` + 2 m temperature + surface pressure (Bolton 1980, via
+:mod:`cfs.derive.humidity`). ``RH`` is fetched only as a derivation input — never
+exposed raw — and only when specific_humidity is requested.
 
 Members are selected via ``config={"members": [...]}`` (default: control + all 30
 perturbations). The ensemble is the point, but a full 31-member pull is many
@@ -64,6 +66,7 @@ from cfs.core.models import (
 )
 from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
+from cfs.derive.humidity import specific_humidity_from_rh
 from cfs.subset.bbox import apply_bbox_subset, plan_bbox_subset
 from cfs.subset.canonical import VariableMapping, harmonize
 
@@ -101,6 +104,17 @@ _MAPPINGS: list[VariableMapping] = [
     VariableMapping("_apcp", CanonicalVar.PRECIPITATION_FLUX, scale=1.0 / _INTERVAL_S),
     VariableMapping("_dswrf", CanonicalVar.SHORTWAVE_RADIATION_DOWN),
     VariableMapping("_dlwrf", CanonicalVar.LONGWAVE_RADIATION_DOWN),
+]
+
+# Specific humidity is not shipped — GEFS-select carries 2 m relative humidity, so
+# q is *derived* from RH + 2 m temperature + surface pressure (Bolton 1980). RH is
+# an instantaneous field fetched only as a derivation input (never exposed raw); T
+# and P are reused from the instantaneous set above. (grib_var, grib_level, internal)
+_DERIVED_Q = "_q2m"
+_Q_INPUTS = [
+    ("RH", "2 m above ground", "_rh2m"),
+    ("TMP", "2 m above ground", "_t2m"),
+    ("PRES", "surface", "_sp"),
 ]
 
 # pgrb2sp25 (the 0.25° select product) is produced 3-hourly to f240 only — f243+
@@ -183,11 +197,16 @@ class GEFSConnector(BaseForcingConnector):
                     "select product), byte-range read from the GRIB2 files on the "
                     "noaa-gefs-pds S3 archive. Returns a member dimension (control + "
                     "perturbations). Instantaneous fields plus bucket-de-accumulated "
-                    "precipitation_flux and down shortwave/longwave radiation."
+                    "precipitation_flux and down shortwave/longwave radiation, and "
+                    "specific_humidity derived from 2 m RH + temperature + pressure."
                 ),
                 variables=[
                     ProductVariable(canonical=m.canonical, source_name=m.source_name)
                     for m in _MAPPINGS
+                ] + [
+                    ProductVariable(
+                        canonical=CanonicalVar.SPECIFIC_HUMIDITY, source_name=_DERIVED_Q
+                    )
                 ],
                 resolution_deg=0.25,
                 crs="EPSG:4326",
@@ -228,7 +247,17 @@ class GEFSConnector(BaseForcingConnector):
         wanted = set(variables) if variables else None
         selected_inst = [v for v in _VARS if wanted is None or v[2] in wanted]
         selected_flux = [v for v in _FLUX_VARS if wanted is None or v[2] in wanted]
-        if not selected_inst and not selected_flux:
+        want_q = wanted is None or CanonicalVar.SPECIFIC_HUMIDITY in wanted
+
+        # Instantaneous (var, level, internal) fields to byte-range fetch: the
+        # exposed identity fields, plus RH/T/P when specific humidity is derived
+        # (T/P may already be selected — dedup by internal name).
+        inst_specs = [(gv, gl, internal) for gv, gl, _c, internal in selected_inst]
+        if want_q:
+            have = {internal for _, _, internal in inst_specs}
+            inst_specs += [s for s in _Q_INPUTS if s[2] not in have]
+
+        if not inst_specs and not selected_flux:
             raise SubsetError("None of the requested variables are offered by GEFS")
         if not self.members:
             raise SubsetError("GEFS member list is empty")
@@ -245,7 +274,7 @@ class GEFSConnector(BaseForcingConnector):
             url = _file_url(member, cycle, lead)
             idx = _parse_idx(_http_range(url + ".idx", 0, "").decode())
             per_var = [
-                f for gv, gl, _c, internal in selected_inst
+                f for gv, gl, internal in inst_specs
                 if (f := _read_field(url, idx, gv, gl, internal, bbox)) is not None
             ]
             # Precip/radiation are bucket quantities (none at f000): de-bucket the
@@ -288,7 +317,21 @@ class GEFSConnector(BaseForcingConnector):
             )
         ds_all = xr.concat(member_cubes, dim="member") if len(member_cubes) > 1 else member_cubes[0]
 
-        canonical = harmonize(ds_all, _MAPPINGS, requested=variables,
+        # Derive specific humidity from RH + 2 m T + surface pressure (the raw RH
+        # input is then dropped by harmonize, which keeps only mapped variables).
+        mappings = _MAPPINGS
+        if want_q:
+            if all(n in ds_all.data_vars for n in ("_rh2m", "_t2m", "_sp")):
+                q = specific_humidity_from_rh(ds_all["_rh2m"], ds_all["_t2m"], ds_all["_sp"])
+                ds_all = ds_all.assign({_DERIVED_Q: q})
+                mappings = [*_MAPPINGS, VariableMapping(_DERIVED_Q, CanonicalVar.SPECIFIC_HUMIDITY)]
+            else:
+                warnings.append(
+                    "GEFS specific_humidity not derived: missing one of RH/T/pressure "
+                    "in the fetched messages"
+                )
+
+        canonical = harmonize(ds_all, mappings, requested=variables,
                               lat_name="latitude", lon_name="longitude")
         return canonical, self._finalize(
             canonical,
@@ -298,7 +341,8 @@ class GEFSConnector(BaseForcingConnector):
             provenance=(
                 f"GEFS pgrb2s.0p25 via noaa-gefs-pds S3 byte-range (cfgrib); "
                 f"cycle {cycle:%Y%m%d %Hz}; {len(member_cubes)} members; "
-                f"precip/radiation bucket-de-accumulated to 3 h intervals; canonical-v1"
+                f"precip/radiation bucket-de-accumulated to 3 h intervals; "
+                f"specific_humidity derived from RH (Bolton 1980) when requested; canonical-v1"
             ),
             t0=t0,
             settings=settings,
