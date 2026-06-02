@@ -86,7 +86,7 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 18 connectors (15 live-verified: 7 anonymous + 8 auth-gated
+Implemented — 19 connectors (16 live-verified: 8 anonymous + 8 auth-gated
 confirmed with real CDS + Earthdata credentials; 3 offline-verified pending live
 access):
 
@@ -96,6 +96,7 @@ access):
 | `aorc` | NOAA AORC v1.1 (1 km, hourly) | regular | S3 Zarr | live |
 | `chirps` | CHIRPS v2.0 daily precip (0.05°) | regular | HTTP NetCDF | live |
 | `rdrs` | RDRS / CaSR v3.2 (Canada, ~10 km, hourly) | 2-D rotated pole | OPeNDAP | live |
+| `barra2` | BoM BARRA-R2 (Australia, ~12 km, hourly) | regular | NCI THREDDS ncss | live◊ |
 | `conus404` | CONUS404 (4 km WRF, hourly) | 2-D LCC | OSN Zarr | live |
 | `hrrr` | NOAA HRRR analysis (3 km, hourly) | 2-D LCC | hrrrzarr S3 | live |
 | `era5_land` | ECMWF ERA5-Land (0.1°, hourly) | regular | CDS API | live (creds) |
@@ -111,7 +112,7 @@ access):
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-15 of 18 connectors are confirmed against their live stores (the auth-gated ones
+16 of 19 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -136,8 +137,18 @@ the cleanly-convertible fields — `tg`→air_temperature, `rr`→precipitation_
 `qq`→shortwave, `fg`→wind_speed — and **defers** `pp` (sea-level, not surface,
 pressure) and `hu` (relative humidity needs a surface pressure E-OBS lacks).
 Request tokens (`grid_resolution` `0_1deg`/`0_25deg`, `version` `31_0e`, `period`
-`full_period`) were checked against the live CDS form constraints; a full retrieve
-has not been run end-to-end. Version override via `config={"version": "30_0e"}`.
+`full_period`) were checked against the live CDS form constraints, and a live
+retrieve confirmed auth + request validate server-side — it returns only once the
+**E-OBS dataset licence is accepted** on the CDS site (a one-time manual step CFS
+cannot do for you). Version override via `config={"version": "30_0e"}`.
+◊ `barra2` (BoM BARRA-R2, Australia) uses the anonymous NCI THREDDS **NetcdfSubset**
+service: the server does the bbox+time subset and returns a clean NetCDF, avoiding
+the OPeNDAP DAP2 truncation that NCI's server exhibits under concurrent reads. All
+fields are CORDEX/CMIP CF names already in SI (identity mappings, incl. `pr` flux
+and `huss`); no dewpoint is published. Instantaneous fields are stamped on the hour
+and hourly *means* (`pr`/`rsds`/`rlds`) at the half-hour midpoint, so times are
+floored to the hour to share one axis. Grid is regular `lat`/`lon` on a 0–360
+longitude (requested lons are normalized). Live-verified against the NCI store.
 
 ### Climate projections (CMIP6)
 

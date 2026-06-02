@@ -27,11 +27,12 @@ unverified conversion" stance):
     than shipped as a questionable mapping.
 
 Auth-gated: needs CDS credentials (``~/.cdsapirc`` or ``CDSAPI_URL``/``CDSAPI_KEY``)
-and acceptance of the E-OBS licence on the CDS site. Offline-verified (request
-building, ZIP extraction, mappings); request tokens (``grid_resolution``
-``0_1deg``/``0_25deg``, ``version`` ``31_0e``, ``period`` ``full_period``) were
-checked against the live CDS dataset form constraints but a full retrieve has not
-been run end-to-end. The version is overridable via ``config={"version": "30_0e"}``.
+and acceptance of the E-OBS licence on the CDS site. Request tokens
+(``grid_resolution`` ``0_1deg``/``0_25deg``, ``version`` ``31_0e``, ``period``
+``full_period``) were checked against the live CDS form constraints, and a live
+retrieve confirmed credentials + request validate server-side; the retrieve then
+returns only once the E-OBS dataset licence has been accepted on the CDS site (a
+one-time manual step). The version is overridable via ``config={"version": "30_0e"}``.
 """
 
 from __future__ import annotations
