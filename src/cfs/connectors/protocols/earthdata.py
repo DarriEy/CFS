@@ -115,4 +115,9 @@ class EarthdataAuthMixin:
                 "Earthdata OPeNDAP access needs the 'earthdata' extra: "
                 "pip install -e '.[earthdata]' (pydap)"
             ) from e
+        # TODO: pydap >=3.5 warns that an http:// URL leaves it to auto-detect the
+        # DAP protocol and defaults to (slower) legacy DAP2. Passing a dap2://- or
+        # dap4://-schemed URL skips that probe and is faster. GES DISC Hyrax serves
+        # both; evaluate switching these endpoints to dap4:// (affects all four
+        # Earthdata OPeNDAP connectors: merra2, nldas, gpm, gldas).
         return xr.open_dataset(url, engine="pydap", session=self._earthdata_session())

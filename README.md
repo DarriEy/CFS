@@ -86,8 +86,9 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — **all 14 live-verified** (7 anonymous; 7 auth-gated confirmed with
-real CDS + Earthdata credentials):
+Implemented — 17 connectors (15 live-verified: 7 anonymous + 8 auth-gated
+confirmed with real CDS + Earthdata credentials; 2 offline-verified pending live
+access):
 
 | slug | product | grid | access | verified |
 |------|---------|------|--------|----------|
@@ -104,11 +105,12 @@ real CDS + Earthdata credentials):
 | `nldas` | NLDAS-2 (0.125°, hourly, CONUS) | regular | OPeNDAP | live (creds) |
 | `gpm` | GPM IMERG Final daily precip (0.1°) | regular | OPeNDAP | live (creds) |
 | `daymet` | Daymet V4R1 (1 km daily, N. America) | 2-D LCC (x/y) | OPeNDAP | live (creds) |
+| `gldas` | NASA GLDAS-2 Noah (0.25°, 3-hourly, global land) | regular | OPeNDAP | live (creds)¶ |
 | `nex_gddp` | NEX-GDDP-CMIP6 (0.25° daily **projections**) | regular | S3 NetCDF | live |
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-14 of 16 connectors are confirmed against their live stores (the auth-gated ones
+15 of 17 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -118,6 +120,14 @@ it is offline-verified (path/conversion logic + a clear setup error) and needs
 so it needs AWS credentials (`config={"anon": False}`); offline-verified, and its
 daily `prcp` units are **unverified** (assumed mm/day) — every precip fetch
 carries an explicit warning since range-QC cannot catch a precip unit error.
+¶ `gldas` reuses the Earthdata OPeNDAP mixin (same GES DISC `hydro1` host as
+`nldas`); all GLDAS-2 Noah forcing fields are already canonical SI so every
+mapping is identity. Live-verified against the GES DISC store (variable names,
+`lat`/`lon` coords, identity mappings, bbox subset). Two products:
+`gldas:noah025_3h` (GLDAS-2.1, 2000→present) and `gldas:noah025_3h_v20`
+(GLDAS-2.0, 1948–2014). Wind ships as a scalar speed only (no u/v), so it maps to
+`wind_speed`; opens one OPeNDAP endpoint per 3-hour stamp (8/day), so long ranges
+are slow (warned in the `FetchResult`).
 
 ### Climate projections (CMIP6)
 
