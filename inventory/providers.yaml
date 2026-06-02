@@ -1,7 +1,7 @@
 # CFS Provider Inventory
-# Total providers: 31 — 29 live-verified + 2 offline/access-gated.
-# Coverage batch: chirts (CHIRPS temperature twin) + persiann_cdr (satellite
-# precip CDR) + fldas (Africa/global land, monthly) — all new, live-verified.
+# Total providers: 32 — 30 live-verified + 2 offline/access-gated.
+# gfs: first FORECAST connector (global GFS, S3 GRIB2 byte-range via cfgrib).
+# Prior batch: chirts + persiann_cdr + fldas (all live-verified).
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
@@ -681,6 +681,30 @@
     - surface_downwelling_longwave_flux
     - precipitation_flux    # Rainf_f_tavg (already a flux, identity)
   note: "FEWS NET LDAS, FLDAS_NOAH01_C_GL_M.001. Reuses the GLDAS Earthdata/DAP4 mixin; all identity SI. MONTHLY only (no daily on this Hyrax) - climatology/seasonal, too coarse for event-scale. Land-only (ocean fill). LIVE-VERIFIED (East Africa 2020-01: T 277-300 K)."
+  status: implemented
+
+- slug: gfs
+  name: NOAA GFS atmospheric forecast (0.25°, hourly, global, via S3 GRIB2)
+  protocol: http
+  base_url: https://noaa-gfs-bdp-pds.s3.amazonaws.com
+  resolution_deg: 0.25
+  grid: regular            # 0-360 longitude, normalized on subset
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA NCEP Global Forecast System (GFS)."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # TMP 2 m (identity, K)
+    - specific_humidity                     # SPFH 2 m
+    - surface_air_pressure                  # PRES surface
+    - eastward_wind                         # UGRD 10 m
+    - northward_wind                        # VGRD 10 m
+    - precipitation_flux                    # PRATE surface (flux, identity)
+    - surface_downwelling_shortwave_flux    # DSWRF surface (fcst-avg, absent at f000)
+    - surface_downwelling_longwave_flux     # DLWRF surface (fcst-avg, absent at f000)
+  note: "FIRST FORECAST connector. Herbie-style: reads the .idx byte index and HTTP byte-range fetches only the surface GRIB messages (~MB not ~1.5GB), decodes with cfgrib (forecast extra). Cycle = most recent 00/06/12/18Z <= start; valid time -> lead hour (1h to f120, 3h to f384). All identity SI. LIVE-VERIFIED (US: T 292-300 K, SW 80-228 W/m2, sp 92-94 kPa)."
   status: implemented
 
 # ── Migration backlog (handlers to port from SYMFLUENCE) ───────────────
