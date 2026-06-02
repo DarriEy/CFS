@@ -169,9 +169,9 @@ flux, which the analysis lacks. `gpm` adds the IMERG Early and Late near-real-ti
 daily runs alongside Final. `aorc_nwm` serves AORC v1.1 on the NWM v3.0 1 km LCC
 grid (S3 Zarr; lat/lon generated from the LCC projection). `era5_cds` provides
 standard ERA5 single-levels via the CDS API (zip of instant+accum NetCDFs merged)
-as a credentialed alternative to the anonymous `era5_arco`. NARR's added `dswrf`/
-`dlwrf` radiation fields are pending live re-verification (NOAA PSL was returning
-503s at verification time).
+as a credentialed alternative to the anonymous `era5_arco`. `narr` adds `dswrf`/
+`dlwrf` (down short/longwave) radiation, live-verified against NOAA PSL (Nebraska
+Jun 2020: SW 358–379, LW 353–366 W m⁻²).
 
 ### Climate projections (CMIP6)
 
