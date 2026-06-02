@@ -86,7 +86,7 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 24 connectors (22 live-verified: 12 anonymous + 10 auth-gated
+Implemented — 26 connectors (24 live-verified: 13 anonymous + 11 auth-gated
 confirmed with real CDS + Earthdata credentials; 2 offline-verified pending live
 access or provider-specific credentials):
 
@@ -94,19 +94,21 @@ access or provider-specific credentials):
 |------|---------|------|--------|----------|
 | `era5_arco` | ECMWF ERA5 (0.25°, hourly) | regular | GCS Zarr | live |
 | `aorc` | NOAA AORC v1.1 (1 km, hourly) | regular | S3 Zarr | live |
+| `aorc_nwm` | NOAA AORC v1.1 NWM-Projected (1 km) | 2-D LCC | S3 Zarr | live |
 | `chirps` | CHIRPS v2.0 daily precip (0.05°) | regular | HTTP NetCDF | live |
 | `rdrs` | RDRS / CaSR v3.2 (Canada, ~10 km, hourly) | 2-D rotated pole | OPeNDAP | live |
 | `barra2` | BoM BARRA-R2 (Australia, ~12 km, hourly) | regular | NCI THREDDS ncss | live◊ |
 | `conus404` | CONUS404 (4 km WRF, hourly) | 2-D LCC | OSN Zarr | live |
-| `hrrr` | NOAA HRRR analysis (3 km, hourly) | 2-D LCC | hrrrzarr S3 | live |
+| `hrrr` | NOAA HRRR analysis + forecast (3 km) | 2-D LCC | hrrrzarr S3 | live |
 | `era5_land` | ECMWF ERA5-Land (0.1°, hourly) | regular | CDS API | live (creds) |
+| `era5_cds` | ECMWF ERA5 reanalysis (0.25°, hourly) | regular | CDS API | live (creds) |
 | `wfde5` | WFDE5 bias-corrected ERA5 forcing (0.5°, hourly) | regular | CDS API | live (creds)✦ |
 | `carra` | Copernicus Arctic Regional Reanalysis (2.5 km) | regular† | CDS API | live (creds) |
 | `cerra` | Copernicus European Regional Reanalysis (5.5 km) | regular† | CDS API | live (creds) |
 | `eobs` | E-OBS European gridded **observations** (0.1°/0.25° daily) | regular | CDS API | live (creds)‖ |
 | `merra2` | NASA MERRA-2 (0.5°×0.625°, hourly) | regular | OPeNDAP | live (creds) |
 | `nldas` | NLDAS-2 (0.125°, hourly, CONUS) | regular | OPeNDAP | live (creds) |
-| `gpm` | GPM IMERG Final daily precip (0.1°) | regular | OPeNDAP | live (creds) |
+| `gpm` | GPM IMERG Daily precip (Final/Early/Late) | regular | OPeNDAP | live (creds) |
 | `cmorph` | NOAA CPC CMORPH CDR daily precip (0.25°) | regular | HTTP tar NetCDF | live※ |
 | `daymet` | Daymet V4R1 (1 km daily, N. America) | 2-D LCC (x/y) | OPeNDAP | live (creds) |
 | `gldas` | NASA GLDAS-2 Noah (0.25°, 3-hourly, global land) | regular | OPeNDAP | live (creds)¶ |
@@ -117,7 +119,7 @@ access or provider-specific credentials):
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-22 of 24 connectors are confirmed against their live stores (the auth-gated ones
+24 of 26 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -162,6 +164,14 @@ reads the NOAA CPC daily-tar archive, which only hosts a **rolling recent window
 (roughly the last couple of months) — historical years are not on that endpoint,
 so a fetch outside the window raises a clear "no tar listed" error. NARR carries
 occasional tiny-negative precip from the source fields (advisory range-QC warning).
+`hrrr` adds an `sfc_fcst` product (1-hour forecast) that provides precipitation
+flux, which the analysis lacks. `gpm` adds the IMERG Early and Late near-real-time
+daily runs alongside Final. `aorc_nwm` serves AORC v1.1 on the NWM v3.0 1 km LCC
+grid (S3 Zarr; lat/lon generated from the LCC projection). `era5_cds` provides
+standard ERA5 single-levels via the CDS API (zip of instant+accum NetCDFs merged)
+as a credentialed alternative to the anonymous `era5_arco`. NARR's added `dswrf`/
+`dlwrf` radiation fields are pending live re-verification (NOAA PSL was returning
+503s at verification time).
 
 ### Climate projections (CMIP6)
 

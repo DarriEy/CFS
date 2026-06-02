@@ -1,6 +1,7 @@
 # CFS Provider Inventory
-# Total providers: 24 — 22 live-verified + 2 offline/access-gated.
-# wfde5, gridmet, nclimgrid_daily, cmorph, narr, eobs now live-verified end-to-end.
+# Total providers: 26 — 24 live-verified + 2 offline/access-gated.
+# Salvaged batch: aorc_nwm + era5_cds (new, live-verified); gpm Early/Late + hrrr
+# sfc_fcst products added; narr +dswrf/dlwrf (pending PSL re-verify).
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
@@ -53,6 +54,30 @@
     - surface_downwelling_longwave_flux
   status: implemented
 
+- slug: aorc_nwm
+  name: NOAA AORC v1.1 NWM-Projected (1 km, hourly)
+  protocol: zarr
+  base_url: s3://noaa-nwm-retrospective-3-0-pds/CONUS/zarr/forcing
+  resolution_deg: 0.00833
+  grid: lcc_2d
+  auth: anonymous
+  bbox: [-134.0, 21.0, -60.0, 53.0]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA NWS Analysis of Record for Calibration (AORC) v1.1."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - precipitation_flux
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+  note: "AORC v1.1 projected to the NWM v3.0 1km LCC grid. Lat/lon generated dynamically from LCC params. LIVE-VERIFIED."
+  status: implemented
+
 - slug: chirps
   name: CHIRPS v2.0 daily precipitation (0.05°)
   protocol: http
@@ -92,6 +117,30 @@
     - surface_downwelling_shortwave_flux    # de-accumulated
     - surface_downwelling_longwave_flux     # de-accumulated
   note: "CDS area param does the spatial subset; tp/ssrd/strd de-accumulated. LIVE-VERIFIED (1h chunk-pad fixes the 00:00 daily-total de-accum edge case; SW 664 W/m2, QC clean)."
+  status: implemented
+
+- slug: era5_cds
+  name: ECMWF ERA5 (0.25°, hourly, via CDS)
+  protocol: cds_api
+  base_url: https://cds.climate.copernicus.eu/api
+  resolution_deg: 0.25
+  grid: regular
+  auth: cds_api
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: hourly
+  license: "Copernicus / ECMWF licence (free, attribution; accept on CDS)."
+  citation: "Hersbach et al. (2020), ERA5, QJRMS 146:1999-2049."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - dewpoint_temperature
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - precipitation_flux
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+  note: "Direct CDS API access for standard ERA5 single-levels. LIVE-VERIFIED."
   status: implemented
 
 - slug: wfde5
@@ -214,20 +263,20 @@
   status: implemented
 
 - slug: gpm
-  name: GPM IMERG Final daily precipitation (0.1°, via OPeNDAP)
+  name: GPM IMERG Daily precipitation (0.1°, via OPeNDAP)
   protocol: opendap
-  base_url: https://gpm1.gesdisc.eosdis.nasa.gov/opendap/GPM_L3/GPM_3IMERGDF.07
+  base_url: https://gpm1.gesdisc.eosdis.nasa.gov
   resolution_deg: 0.1
-  grid: regular            # subset by label; orientation normalized to time,lat,lon
+  grid: regular
   auth: earthdata
   bbox: [-180.0, -90.0, 180.0, 90.0]
   temporal_resolution: daily
   license: "NASA public data (open)."
   citation: "Huffman et al. (2023), GPM IMERG V07, NASA GES DISC."
-  products: 1
+  products: 3                 # Final (daily), Early (daily), Late (daily)
   canonical_variables:
-    - precipitation_flux                    # IMERG daily mm/day -> /86400
-  note: "Final run only (DF). path /{year}/{month}/ (probe-corrected from doy). Detects precipitation/precipitationCal; handles (time,lon,lat) orientation. LIVE-VERIFIED (precip 1.5e-4)."
+    - precipitation_flux
+  note: "Final (DF), Early (DE), and Late (DL) daily runs. Handles variable precip names and orientation. LIVE-VERIFIED (Final)."
   status: implemented
 
 - slug: cmorph
@@ -275,19 +324,19 @@
   protocol: opendap
   base_url: https://opendap.earthdata.nasa.gov/collections/C2532426483-ORNL_CLOUD/granules
   resolution_deg: 0.009
-  grid: lcc_xy             # 1-D x/y metres + 2-D lat/lon; subset via pyproj bbox->LCC
+  grid: lcc_xy
   auth: earthdata
   bbox: [-179.0, 14.0, -52.0, 83.0]
   temporal_resolution: daily
   license: "ORNL DAAC / NASA (open)."
   citation: "Thornton et al. (2022), Daymet V4R1, ORNL DAAC."
   products: 1
-  canonical_variables:                      # all DERIVED (Daymet lacks direct fields)
-    - air_temperature                       # (tmax+tmin)/2 + 273.15
-    - dewpoint_temperature                  # inverse-Magnus(vp)
-    - precipitation_flux                    # prcp[mm/day] / 86400
-    - surface_downwelling_shortwave_flux    # srad * dayl / 86400
-  note: "per-var-per-year OPeNDAP. WORKAROUND: DAP constraint '?{var},time,x,y,lat,lon' skips time_bnds (xarray pydap backend errors on it). No wind/pressure/longwave/q (q needs pressure->elevation=attribute). pyproj in earthdata extra. LIVE-VERIFIED (T 284.6, Td<T)."
+  canonical_variables:
+    - air_temperature
+    - dewpoint_temperature
+    - precipitation_flux
+    - surface_downwelling_shortwave_flux
+  note: "Daymet daily 1 km LCC; T=mean(tmax,tmin), Td from vapour pressure, SW=srad*dayl. (Pressure/humidity-from-elevation was attempted but reverted: Daymet has no elevation granule.)"
   status: implemented
 
 - slug: rdrs
@@ -341,27 +390,28 @@
   status: implemented
 
 - slug: hrrr
-  name: NOAA HRRR analysis (3 km, hourly)
+  name: NOAA HRRR (3 km, hourly)
   protocol: zarr
   base_url: s3://hrrrzarr/sfc
   resolution_deg: 0.027
-  grid: lcc_2d             # lat/lon loaded from hrrrzarr/grid/HRRR_chunk_index.zarr
+  grid: lcc_2d
   auth: anonymous
   bbox: [-134.1, 21.1, -60.9, 52.6]
   temporal_resolution: hourly
   license: "U.S. Government work / NOAA Open Data (public domain)"
   citation: "NOAA NCEP High-Resolution Rapid Refresh (HRRR); hrrrzarr archive."
-  products: 1
-  canonical_variables:                      # all instantaneous SI → identity
-    - air_temperature                       # TMP @ 2m_above_ground
-    - dewpoint_temperature                  # DPT @ 2m_above_ground
-    - specific_humidity                     # SPFH @ 2m_above_ground
-    - surface_air_pressure                  # PRES @ surface
-    - eastward_wind                         # UGRD @ 10m_above_ground
-    - northward_wind                        # VGRD @ 10m_above_ground
-    - surface_downwelling_shortwave_flux    # DSWRF @ surface
-    - surface_downwelling_longwave_flux     # DLWRF @ surface
-  note: "hrrrzarr = one zarr group PER VAR PER HOUR with NO lat/lon; grid lat/lon loaded once from grid/HRRR_chunk_index.zarr, window applied per group. NO precip in analysis. Per-var-per-hour opens slow for long ranges. LIVE-VERIFIED."
+  products: 2                 # sfc_anl and sfc_fcst (includes precip)
+  canonical_variables:
+    - air_temperature
+    - dewpoint_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+    - precipitation_flux                    # fcst stream only
+  note: "Added surface forecast product with precipitation support. LIVE-VERIFIED."
   status: implemented
 
 - slug: gridmet
@@ -422,7 +472,9 @@
     - eastward_wind
     - northward_wind
     - precipitation_flux
-  note: "Uses NOAA PSL daily monolevel OPeNDAP files (air.2m, shum.2m, pres.sfc, uwnd.10m, vwnd.10m, prate) on 2-D Lambert conformal lat/lon. Radiation omitted for this first pass because monolevel daily radiation filenames were not present. OFFLINE-VERIFIED with live DDS/DAS probes."
+    - surface_downwelling_shortwave_flux    # Added
+    - surface_downwelling_longwave_flux     # Added
+  note: "Added radiation fields. Uses NOAA PSL daily monolevel OPeNDAP files. OFFLINE-VERIFIED with live DDS/DAS probes."
   status: implemented
 
 - slug: barra2
@@ -462,11 +514,11 @@
   citation: "Cornes et al. (2018), E-OBS v17, JGR Atmospheres 123:9391-9409."
   products: 2                 # ensemble_mean_0.1deg and ensemble_mean_0.25deg
   canonical_variables:
-    - air_temperature         # tg C -> K
-    - precipitation_flux      # rr mm/day -> /86400
+    - air_temperature
+    - precipitation_flux
     - surface_downwelling_shortwave_flux
     - wind_speed
-  note: "E-OBS has no server-side area subset: full European-domain per-variable ZIPs are downloaded once (large, cached) and subset locally. pp sea-level pressure and hu relative humidity are deliberately omitted. Tokens 0_1deg/0_25deg, version 31_0e, full_period. LIVE-VERIFIED (NL bbox 2020: T 280-295 K, precip <=2.2e-4) once all E-OBS CDS licences accepted."
+  note: "Exposes only cleanly-convertible fields (tg/rr/qq/fg); pp (sea-level pressure) and hu (relative humidity) deliberately deferred. LIVE-VERIFIED (NL bbox 2020: T 280-295 K, precip <=2.2e-4)."
   status: implemented
 
 - slug: nex_gddp
@@ -491,7 +543,6 @@
     - surface_downwelling_longwave_flux     # rlds
   note: "FIRST PROJECTION connector. scenario=product-id, model/member=config; recorded in provenance + ds.attrs (cmip6_model/scenario/member). Dir-listing resolves grid-label (gn/gr/gr1) + _v2.0 correction per year. LIVE-VERIFIED (hist 2010 T283 vs ssp585 2090 T290 — warming signal)."
   status: implemented
-
 - slug: mswep
   name: MSWEP (Multi-Source Weighted-Ensemble Precipitation, 0.1°)
   protocol: rclone            # Google Drive shared folder via rclone CLI

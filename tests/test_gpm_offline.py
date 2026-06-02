@@ -20,10 +20,19 @@ def test_registered():
 
 
 def test_url_structure_uses_year_month():
-    # IMERG daily is laid out by /{year}/{month}/ (June -> 06).
-    url = _opendap_url(2015, 6, "20150601")
-    assert url.endswith(
+    # IMERG daily is laid out by /{year}/{month}/ (June -> 06); the run selects
+    # the collection + file prefix (Final / Early / Late).
+    final = _opendap_url("gpm:imerg_daily", 2015, 6, "20150601")
+    assert final.endswith(
         "/GPM_3IMERGDF.07/2015/06/3B-DAY.MS.MRG.3IMERG.20150601-S000000-E235959.V07B.nc4"
+    )
+    early = _opendap_url("gpm:imerg_early", 2015, 6, "20150601")
+    assert early.endswith(
+        "/GPM_3IMERGDE.07/2015/06/3B-DAY-E.MS.MRG.3IMERG.20150601-S000000-E235959.V07B.nc4"
+    )
+    late = _opendap_url("gpm:imerg_late", 2015, 6, "20150601")
+    assert late.endswith(
+        "/GPM_3IMERGDL.07/2015/06/3B-DAY-L.MS.MRG.3IMERG.20150601-S000000-E235959.V07B.nc4"
     )
 
 

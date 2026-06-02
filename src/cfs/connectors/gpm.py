@@ -47,8 +47,17 @@ from cfs.subset.canonical import VariableMapping, harmonize
 logger = structlog.get_logger()
 
 GES_DISC = "https://gpm1.gesdisc.eosdis.nasa.gov"
-OPENDAP_PATH = "/opendap/GPM_L3/GPM_3IMERGDF.07"
+_OPENDAP_BASE = "/opendap/GPM_L3"
+_VERSION = "V07B"
 SECONDS_PER_DAY = 86400.0
+
+# product-id suffix → (collection, daily-file prefix). Final is the gauge-corrected
+# run; Early/Late are near-real-time. All confirmed live on GES DISC (HTTP 200).
+_RUNS = {
+    "imerg_daily": ("GPM_3IMERGDF.07", "3B-DAY.MS.MRG.3IMERG"),
+    "imerg_early": ("GPM_3IMERGDE.07", "3B-DAY-E.MS.MRG.3IMERG"),
+    "imerg_late": ("GPM_3IMERGDL.07", "3B-DAY-L.MS.MRG.3IMERG"),
+}
 
 # After detection the precip field is renamed to this internal name, then mapped.
 _PRECIP = "precipitation"
@@ -62,12 +71,14 @@ _MAPPINGS: list[VariableMapping] = [
 ]
 
 
-def _opendap_url(year: int, month: int, ymd: str) -> str:
-    # IMERG *daily* (3IMERGDF) is laid out by /{year}/{month}/ (NOT day-of-year,
-    # which is the half-hourly product's layout) — confirmed against GES DISC.
+def _opendap_url(product_id: str, year: int, month: int, ymd: str) -> str:
+    # IMERG *daily* is laid out by /{year}/{month}/ (NOT day-of-year, which is the
+    # half-hourly product's layout) — confirmed against GES DISC. The run (Final/
+    # Early/Late) selects the collection and file prefix.
+    collection, prefix = _RUNS[product_id.split(":", 1)[1]]
     return (
-        f"{GES_DISC}{OPENDAP_PATH}/{year}/{month:02d}/"
-        f"3B-DAY.MS.MRG.3IMERG.{ymd}-S000000-E235959.V07B.nc4"
+        f"{GES_DISC}{_OPENDAP_BASE}/{collection}/{year}/{month:02d}/"
+        f"{prefix}.{ymd}-S000000-E235959.{_VERSION}.nc4"
     )
 
 
@@ -108,7 +119,47 @@ class GPMConnector(EarthdataAuthMixin, BaseForcingConnector):
                 protocol=Protocol.OPENDAP,
                 license="NASA public data (open).",
                 citation="Huffman et al. (2023), GPM IMERG V07, NASA GES DISC.",
-            )
+            ),
+            ForcingProduct(
+                id=f"{self.slug}:imerg_early",
+                provider=self.slug,
+                name="GPM IMERG Early daily precipitation (0.1°)",
+                description=(
+                    "NASA GPM IMERG Early run (near-real-time), daily 0.1° "
+                    "precipitation via Earthdata-authenticated OPeNDAP."
+                ),
+                variables=[
+                    ProductVariable(canonical=m.canonical, source_name=m.source_name)
+                    for m in _MAPPINGS
+                ],
+                resolution_deg=0.1,
+                crs="EPSG:4326",
+                bbox=BoundingBox(min_lon=-180, min_lat=-90, max_lon=180, max_lat=90),
+                temporal=TemporalExtent(resolution=TemporalResolution.DAILY),
+                protocol=Protocol.OPENDAP,
+                license="NASA public data (open).",
+                citation="Huffman et al. (2023), GPM IMERG V07, NASA GES DISC.",
+            ),
+            ForcingProduct(
+                id=f"{self.slug}:imerg_late",
+                provider=self.slug,
+                name="GPM IMERG Late daily precipitation (0.1°)",
+                description=(
+                    "NASA GPM IMERG Late run (near-real-time), daily 0.1° "
+                    "precipitation via Earthdata-authenticated OPeNDAP."
+                ),
+                variables=[
+                    ProductVariable(canonical=m.canonical, source_name=m.source_name)
+                    for m in _MAPPINGS
+                ],
+                resolution_deg=0.1,
+                crs="EPSG:4326",
+                bbox=BoundingBox(min_lon=-180, min_lat=-90, max_lon=180, max_lat=90),
+                temporal=TemporalExtent(resolution=TemporalResolution.DAILY),
+                protocol=Protocol.OPENDAP,
+                license="NASA public data (open).",
+                citation="Huffman et al. (2023), GPM IMERG V07, NASA GES DISC.",
+            ),
         ]
 
     async def fetch(
@@ -132,7 +183,7 @@ class GPMConnector(EarthdataAuthMixin, BaseForcingConnector):
         days = pd.date_range(time_range.start.date(), time_range.end.date(), freq="D")
 
         def _piece(d):
-            url = _opendap_url(d.year, d.month, d.strftime("%Y%m%d"))
+            url = _opendap_url(product_id, d.year, d.month, d.strftime("%Y%m%d"))
             ds = self._open_opendap(url)
             var = _detect_precip(ds)
             if var is None:
