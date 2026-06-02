@@ -1,7 +1,7 @@
 # CFS Provider Inventory
-# Total providers: 24 — 21 live-verified + 3 offline/access-gated.
-# wfde5, gridmet, nclimgrid_daily, cmorph, narr now live-verified end-to-end.
-# Offline/blocked: eobs (CDS licence), mswep (rclone), em_earth (AWS creds).
+# Total providers: 24 — 22 live-verified + 2 offline/access-gated.
+# wfde5, gridmet, nclimgrid_daily, cmorph, narr, eobs now live-verified end-to-end.
+# Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
 # Connectors return a bbox+time subset as a canonical xarray.Dataset and STOP.
@@ -466,8 +466,8 @@
     - precipitation_flux      # rr mm/day -> /86400
     - surface_downwelling_shortwave_flux
     - wind_speed
-  note: "E-OBS has no server-side area subset: full European-domain per-variable ZIPs are downloaded once (large, cached) and subset locally. pp sea-level pressure and hu relative humidity are deliberately omitted. Tokens (0_1deg/0_25deg, version 31_0e, full_period) validated vs the live CDS form; auth + request validate server-side, but a live retrieve is BLOCKED until ALL E-OBS licences are accepted on the CDS account behind ~/.cdsapirc."
-  status: implemented_blocked_access
+  note: "E-OBS has no server-side area subset: full European-domain per-variable ZIPs are downloaded once (large, cached) and subset locally. pp sea-level pressure and hu relative humidity are deliberately omitted. Tokens 0_1deg/0_25deg, version 31_0e, full_period. LIVE-VERIFIED (NL bbox 2020: T 280-295 K, precip <=2.2e-4) once all E-OBS CDS licences accepted."
+  status: implemented
 
 - slug: nex_gddp
   name: NASA NEX-GDDP-CMIP6 (0.25° daily downscaled CMIP6 projections)

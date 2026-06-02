@@ -86,8 +86,8 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 24 connectors (21 live-verified: 12 anonymous + 9 auth-gated
-confirmed with real CDS + Earthdata credentials; 3 offline-verified pending live
+Implemented — 24 connectors (22 live-verified: 12 anonymous + 10 auth-gated
+confirmed with real CDS + Earthdata credentials; 2 offline-verified pending live
 access or provider-specific credentials):
 
 | slug | product | grid | access | verified |
@@ -103,7 +103,7 @@ access or provider-specific credentials):
 | `wfde5` | WFDE5 bias-corrected ERA5 forcing (0.5°, hourly) | regular | CDS API | live (creds)✦ |
 | `carra` | Copernicus Arctic Regional Reanalysis (2.5 km) | regular† | CDS API | live (creds) |
 | `cerra` | Copernicus European Regional Reanalysis (5.5 km) | regular† | CDS API | live (creds) |
-| `eobs` | E-OBS European gridded **observations** (0.1°/0.25° daily) | regular | CDS API | offline‖ |
+| `eobs` | E-OBS European gridded **observations** (0.1°/0.25° daily) | regular | CDS API | live (creds)‖ |
 | `merra2` | NASA MERRA-2 (0.5°×0.625°, hourly) | regular | OPeNDAP | live (creds) |
 | `nldas` | NLDAS-2 (0.125°, hourly, CONUS) | regular | OPeNDAP | live (creds) |
 | `gpm` | GPM IMERG Final daily precip (0.1°) | regular | OPeNDAP | live (creds) |
@@ -117,7 +117,7 @@ access or provider-specific credentials):
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-21 of 24 connectors are confirmed against their live stores (the auth-gated ones
+22 of 24 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -141,11 +141,10 @@ downloaded once per variable (large, cached) and subset locally. It exposes only
 the cleanly-convertible fields — `tg`→air_temperature, `rr`→precipitation_flux,
 `qq`→shortwave, `fg`→wind_speed — and **defers** `pp` (sea-level, not surface,
 pressure) and `hu` (relative humidity needs a surface pressure E-OBS lacks).
-Request tokens (`grid_resolution` `0_1deg`/`0_25deg`, `version` `31_0e`, `period`
-`full_period`) were checked against the live CDS form constraints, and a live
-retrieve confirmed auth + request validate server-side — it returns only once the
-**E-OBS dataset licence is accepted** on the CDS site (a one-time manual step CFS
-cannot do for you). Version override via `config={"version": "30_0e"}`.
+Request tokens are `grid_resolution` `0_1deg`/`0_25deg`, `version` `31_0e`,
+`period` `full_period`. Live-verified (Netherlands bbox, 2020: T 280–295 K, precip
+≤2.2e-4) once all E-OBS dataset licences were accepted on the CDS account behind
+`~/.cdsapirc`. Version override via `config={"version": "30_0e"}`.
 ◊ `barra2` (BoM BARRA-R2, Australia) uses the anonymous NCI THREDDS **NetcdfSubset**
 service: the server does the bbox+time subset and returns a clean NetCDF, avoiding
 the OPeNDAP DAP2 truncation that NCI's server exhibits under concurrent reads. All
@@ -154,9 +153,8 @@ and `huss`); no dewpoint is published. Instantaneous fields are stamped on the h
 and hourly *means* (`pr`/`rsds`/`rlds`) at the half-hour midpoint, so times are
 floored to the hour to share one axis. Grid is regular `lat`/`lon` on a 0–360
 longitude (requested lons are normalized). Live-verified against the NCI store.
-The `wfde5`/`gridmet`/`nclimgrid_daily`/`cmorph`/`narr` batch is now live-verified
-end-to-end (real fetches returning physical values), except E-OBS which stays
-blocked on the manual CDS licence above. ✦ `wfde5` needs the required CDS
+The `wfde5`/`gridmet`/`nclimgrid_daily`/`cmorph`/`narr` batch is live-verified
+end-to-end (real fetches returning physical values). ✦ `wfde5` needs the required CDS
 `product` (`wfde5`) and an underscore `version` (`2_1`), confirmed against the
 live form constraints; it downloads full half-degree monthly NetCDFs (one CDS
 request per variable; precip = `Rainf`+`Snowf`) and subsets locally. ※ `cmorph`
