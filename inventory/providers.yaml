@@ -1,7 +1,7 @@
 # CFS Provider Inventory
-# Total providers: 26 — 24 live-verified + 2 offline/access-gated.
-# Salvaged batch: aorc_nwm + era5_cds (new, live-verified); gpm Early/Late + hrrr
-# sfc_fcst products added; narr +dswrf/dlwrf radiation (live-verified).
+# Total providers: 28 — 26 live-verified + 2 offline/access-gated.
+# Latest salvaged batch: na_cordex + nwm_operational (new, live-verified). cfsr
+# was dropped again (NOMADS is not a CFSR archive; the DODS endpoint is dead).
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
@@ -580,6 +580,51 @@
     - precipitation_flux    # prcp ASSUMED mm/day /86400 -- UNVERIFIED (always warns)
   note: "BLOCKED for anon access (emearth bucket denies anon GET; needs AWS creds via config={'anon':False}). SYMFLUENCE's handler silently 403->'no data'. Precip units UNVERIFIED (can't read a file; QC can't catch a precip unit error) -> explicit FetchResult warning every fetch. Temperature QC-protected. Built credential-capable + clear RegistrationRequiredError on 403. NOT live-verifiable here."
   status: implemented_blocked_access
+
+- slug: na_cordex
+  name: NA-CORDEX (0.22°/0.44° daily, North America, via S3)
+  protocol: zarr
+  base_url: s3://ncar-na-cordex
+  resolution_deg: 0.22
+  grid: regular
+  auth: anonymous
+  bbox: [-179.0, 14.0, -52.0, 83.0]
+  temporal_resolution: daily
+  license: "NCAR / CORDEX (open)."
+  citation: "Mearns et al. (2017), NA-CORDEX, NCAR."
+  products: 3
+  canonical_variables:
+    - air_temperature
+    - precipitation_flux
+    - surface_downwelling_shortwave_flux
+    - eastward_wind
+    - northward_wind
+  note: "Experiments eval/hist-rcp45/hist-rcp85 (grid + bias-correction via config); returns the CORDEX multi-model ensemble (member_id dim). hurs (RH) not offered - no surface pressure to derive q. LIVE-VERIFIED (US hist-rcp45 2000: T 284-301 K)."
+  status: implemented
+
+- slug: nwm_operational
+  name: NWM Operational Forcing (1 km, hourly, via S3)
+  protocol: s3_direct
+  base_url: s3://noaa-nwm-pds
+  resolution_deg: 0.00833
+  grid: lcc_2d
+  auth: anonymous
+  bbox: [-134.0, 21.0, -60.0, 53.0]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA National Water Model (NWM) operational data."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+    - precipitation_flux
+  note: "Only analysis_assim exposed (tm00 file = forcing at valid time); short/medium-range forecasts out of scope. lat/lon generated from the 1km LCC projection (LDASIN has only x/y). Rolling ~4-week archive. LIVE-VERIFIED (CONUS 2026-05-28: T 293-301 K, precip <=6.6 mm/h)."
+  status: implemented
 
 # ── Migration backlog (handlers to port from SYMFLUENCE) ───────────────
 # Each becomes a connector following the same acquire-and-subset contract.
