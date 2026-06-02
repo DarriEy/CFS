@@ -1,7 +1,7 @@
 # CFS Provider Inventory
 # Total providers: 26 — 24 live-verified + 2 offline/access-gated.
 # Salvaged batch: aorc_nwm + era5_cds (new, live-verified); gpm Early/Late + hrrr
-# sfc_fcst products added; narr +dswrf/dlwrf (pending PSL re-verify).
+# sfc_fcst products added; narr +dswrf/dlwrf radiation (live-verified).
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
@@ -474,7 +474,7 @@
     - precipitation_flux
     - surface_downwelling_shortwave_flux    # Added
     - surface_downwelling_longwave_flux     # Added
-  note: "Added radiation fields. Uses NOAA PSL daily monolevel OPeNDAP files. OFFLINE-VERIFIED with live DDS/DAS probes."
+  note: "Added dswrf/dlwrf radiation fields. NOAA PSL daily monolevel OPeNDAP files. LIVE-VERIFIED (Nebraska Jun 2020: SW 358-379, LW 353-366 W m-2)."
   status: implemented
 
 - slug: barra2
