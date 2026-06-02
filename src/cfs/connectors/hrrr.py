@@ -140,8 +140,8 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
 
         hours = pd.date_range(time_range.start, time_range.end, freq="h")
         warnings: list[str] = []
-        pieces = []
-        for ts in hours:
+
+        def _piece(ts):
             day = ts.strftime("%Y%m%d")
             zbase = f"{SFC_PREFIX}/{day}/{day}_{ts.hour:02d}z_anl.zarr"
             data_vars = {}
@@ -152,13 +152,16 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
                     da = da.rename({_PROJ_Y: "y", _PROJ_X: "x"}).isel(y=ys, x=xs).astype("float32")
                     data_vars[var] = da
                 except Exception as e:  # noqa: BLE001 - skip a missing/failed field
+                    # list.append is atomic under the GIL — safe from worker threads.
                     warnings.append(f"{var}@{level} {ts:%Y-%m-%dT%H} unavailable: {type(e).__name__}")
             if not data_vars:
-                continue
+                return None
             ds = xr.Dataset(data_vars).assign_coords(
                 latitude=(("y", "x"), lat_w), longitude=(("y", "x"), lon_w)
             ).expand_dims(time=[pd.Timestamp(ts)])
-            pieces.append(ds.load())
+            return ds.load()
+
+        pieces = await self._gather_pieces([lambda ts=ts: _piece(ts) for ts in hours])
 
         if not pieces:
             raise SubsetError(f"No HRRR data in [{time_range.start}, {time_range.end}] for the bbox")
@@ -167,7 +170,8 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
         canonical = harmonize(ds_all, _MAPPINGS, requested=variables)
         if len(hours) > 6:
             warnings.append(
-                f"HRRR opens {len(selected)} zarr groups per hour ({len(hours)} hours) — slow"
+                f"HRRR opens {len(selected)} zarr groups per hour ({len(hours)} hours), "
+                f"up to {settings.fetch_concurrency} hours concurrently — still slow for long ranges"
             )
         return canonical, self._finalize(
             canonical,

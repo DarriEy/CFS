@@ -155,8 +155,8 @@ class DaymetConnector(EarthdataAuthMixin, BaseForcingConnector):
             return ds.sel(x=slice(x_min, x_max), y=y_slice)
 
         years = range(time_range.start.year, time_range.end.year + 1)
-        pieces = []
-        for year in years:
+
+        def _piece(year):
             per_var = []
             for var in src_vars:
                 # A DAP constraint requests only the fields we need — crucially
@@ -166,10 +166,12 @@ class DaymetConnector(EarthdataAuthMixin, BaseForcingConnector):
                 ds = self._open_opendap(url)
                 ds = _spatial(ds).sel(time=slice(time_range.start, time_range.end))
                 per_var.append(ds)
-            if per_var:
-                merged = xr.merge(per_var, join="inner")
-                if merged.sizes.get("time", 0) > 0:
-                    pieces.append(merged.load())
+            if not per_var:
+                return None
+            merged = xr.merge(per_var, join="inner")
+            return merged.load() if merged.sizes.get("time", 0) > 0 else None
+
+        pieces = await self._gather_pieces([lambda y=y: _piece(y) for y in years])
 
         if not pieces:
             raise SubsetError(f"No Daymet data in [{time_range.start}, {time_range.end}]")

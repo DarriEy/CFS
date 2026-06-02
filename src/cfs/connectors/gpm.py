@@ -130,19 +130,21 @@ class GPMConnector(EarthdataAuthMixin, BaseForcingConnector):
             raise SubsetError("GPM offers only precipitation_flux")
 
         days = pd.date_range(time_range.start.date(), time_range.end.date(), freq="D")
-        pieces = []
-        for d in days:
+
+        def _piece(d):
             url = _opendap_url(d.year, d.month, d.strftime("%Y%m%d"))
             ds = self._open_opendap(url)
             var = _detect_precip(ds)
             if var is None:
-                continue
+                return None
             ds = ds[[var]].rename({var: _PRECIP})
             plan = plan_bbox_subset(ds, bbox, lat_name="lat", lon_name="lon")
             ds = apply_bbox_subset(ds, plan, lat_name="lat", lon_name="lon")
             if "time" not in ds.dims:
                 ds = ds.expand_dims(time=[pd.Timestamp(d)])
-            pieces.append(ds)
+            return ds
+
+        pieces = await self._gather_pieces([lambda d=d: _piece(d) for d in days])
 
         if not pieces:
             raise SubsetError(

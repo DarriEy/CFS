@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     default_lazy: bool = True
     """Return dask-backed lazy datasets by default; caller decides to .load()."""
 
+    # ── Concurrency ─────────────────────────────────────────────────
+    fetch_concurrency: int = 8
+    """Max per-file opens a connector runs in parallel. Per-hour/day/year stores
+    (NLDAS, HRRR, MERRA-2, Daymet, GPM, CHIRPS) pay one network round-trip per
+    file; opening them concurrently (bounded by this) turns N serial latencies
+    into ceil(N / fetch_concurrency). 1 forces the old serial behaviour."""
+
     # ── Quality control ─────────────────────────────────────────────
     qc_enabled: bool = True
     """Sample harmonized cubes against canonical valid ranges and surface

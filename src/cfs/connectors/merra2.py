@@ -136,18 +136,23 @@ class MERRA2Connector(EarthdataAuthMixin, BaseForcingConnector):
 
         day = time_range.start.date()
         end = time_range.end.date()
-        pieces = []
+        days = []
         while day <= end:
+            days.append(day)
+            day = day + timedelta(days=1)
+
+        def _piece(d):
             col_ds = []
             for collection, short, present in active.values():
-                url = _opendap_url(collection, short, day.year, day.month, day.day)
+                url = _opendap_url(collection, short, d.year, d.month, d.day)
                 ds = self._open_opendap(url)
                 keep = [v for v in present if v in ds.data_vars and v in wanted]
                 ds = ds[keep]
                 plan = plan_bbox_subset(ds, bbox, lat_name="lat", lon_name="lon")
                 col_ds.append(apply_bbox_subset(ds, plan, lat_name="lat", lon_name="lon"))
-            pieces.append(xr.merge(col_ds, join="inner") if len(col_ds) > 1 else col_ds[0])
-            day = day + timedelta(days=1)
+            return xr.merge(col_ds, join="inner") if len(col_ds) > 1 else col_ds[0]
+
+        pieces = await self._gather_pieces([lambda d=d: _piece(d) for d in days])
 
         ds_all = xr.concat(pieces, dim="time").sortby("time") if len(pieces) > 1 else pieces[0]
         ds_all = ds_all.sel(time=slice(time_range.start, time_range.end))

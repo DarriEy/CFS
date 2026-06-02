@@ -117,14 +117,16 @@ class NLDASConnector(EarthdataAuthMixin, BaseForcingConnector):
             raise SubsetError("None of the requested variables are offered by NLDAS")
 
         hours = pd.date_range(time_range.start, time_range.end, freq="h")
-        pieces = []
-        for ts in hours:
+
+        def _piece(ts):
             url = _opendap_url(ts.year, int(ts.day_of_year), ts.strftime("%Y%m%d"), ts.hour)
             ds = self._open_opendap(url)
             keep = [v for v in wanted if v in ds.data_vars]
             ds = ds[keep]
             plan = plan_bbox_subset(ds, bbox, lat_name="lat", lon_name="lon")
-            pieces.append(apply_bbox_subset(ds, plan, lat_name="lat", lon_name="lon"))
+            return apply_bbox_subset(ds, plan, lat_name="lat", lon_name="lon")
+
+        pieces = await self._gather_pieces([lambda ts=ts: _piece(ts) for ts in hours])
 
         if not pieces:
             raise SubsetError(f"No NLDAS hours in [{time_range.start}, {time_range.end}]")
@@ -141,7 +143,7 @@ class NLDASConnector(EarthdataAuthMixin, BaseForcingConnector):
             settings=settings,
             lazy=False,
             extra_warnings=[
-                f"NLDAS opens one OPeNDAP endpoint per hour ({len(hours)} requested) — "
-                "slow for long ranges"
+                f"NLDAS opens one OPeNDAP endpoint per hour ({len(hours)} requested), "
+                f"up to {settings.fetch_concurrency} concurrently — still slow for long ranges"
             ],
         )

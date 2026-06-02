@@ -15,9 +15,11 @@ datasets so the caller decides when to materialize.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeVar
 
 import structlog
 
@@ -30,6 +32,8 @@ if TYPE_CHECKING:
     import xarray as xr
 
 logger = structlog.get_logger()
+
+_T = TypeVar("_T")
 
 
 class BaseForcingConnector(ABC):
@@ -84,6 +88,37 @@ class BaseForcingConnector(ABC):
             if p.id == product_id:
                 return p
         raise ConnectorError(self.slug, f"Unknown product '{product_id}'")
+
+    async def _gather_pieces(
+        self,
+        thunks: list[Callable[[], _T | None]],
+        *,
+        concurrency: int | None = None,
+    ) -> list[_T]:
+        """Run blocking per-file open+subset callables concurrently, in order.
+
+        Per-file stores (one NetCDF/Zarr group per hour, day or year) otherwise
+        pay one network round-trip *serially* per file. Each ``thunk`` is a
+        no-argument callable that opens and subsets a single file and returns its
+        piece (or ``None`` to skip it, e.g. a missing/absent field). Thunks run on
+        a thread pool — so the blocking xarray/pydap/s3fs opens overlap — bounded
+        by ``concurrency`` (defaults to ``CFS_FETCH_CONCURRENCY``). Results keep
+        the input order; ``None`` results are dropped. The first thunk to raise
+        propagates its exception (fail loud rather than silently lose data).
+
+        Each thunk must construct its own session/filesystem (the connectors do —
+        ``_open_opendap``/``_open_s3_zarr`` build a fresh one per call), so there
+        is no shared mutable state across threads.
+        """
+        n = concurrency if concurrency is not None else get_settings().fetch_concurrency
+        sem = asyncio.Semaphore(max(1, n))
+
+        async def _run(thunk: Callable[[], _T | None]) -> _T | None:
+            async with sem:
+                return await asyncio.to_thread(thunk)
+
+        results = await asyncio.gather(*(_run(t) for t in thunks))
+        return [r for r in results if r is not None]
 
     # ── Shared guardrails + result assembly (hardening) ─────────────
 

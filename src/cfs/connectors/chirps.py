@@ -102,17 +102,20 @@ class CHIRPSConnector(HTTPFilesMixin, BaseForcingConnector):
         self._guard_area(bbox, settings)
 
         years = range(time_range.start.year, time_range.end.year + 1)
-        pieces = []
-        for year in years:
+
+        def _piece(year):
             url = f"{CHG_BASE}/{DAILY_PATH}/{DAILY_FILE.format(year=year)}"
             path = self._download_cached(url, DAILY_FILE.format(year=year))
             ds = xr.open_dataset(path)
-            plan = plan_bbox_subset(ds, bbox, lat_name="latitude", lon_name="longitude")
-            ds_sp = apply_bbox_subset(ds, plan, lat_name="latitude", lon_name="longitude")
-            ds_sp = ds_sp.sel(time=slice(time_range.start, time_range.end))
-            if ds_sp.sizes.get("time", 0) > 0:
-                pieces.append(ds_sp.load())
-            ds.close()
+            try:
+                plan = plan_bbox_subset(ds, bbox, lat_name="latitude", lon_name="longitude")
+                ds_sp = apply_bbox_subset(ds, plan, lat_name="latitude", lon_name="longitude")
+                ds_sp = ds_sp.sel(time=slice(time_range.start, time_range.end))
+                return ds_sp.load() if ds_sp.sizes.get("time", 0) > 0 else None
+            finally:
+                ds.close()
+
+        pieces = await self._gather_pieces([lambda y=y: _piece(y) for y in years])
 
         if not pieces:
             raise SubsetError(
