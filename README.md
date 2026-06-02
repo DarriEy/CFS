@@ -86,8 +86,8 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 17 connectors (15 live-verified: 7 anonymous + 8 auth-gated
-confirmed with real CDS + Earthdata credentials; 2 offline-verified pending live
+Implemented — 18 connectors (15 live-verified: 7 anonymous + 8 auth-gated
+confirmed with real CDS + Earthdata credentials; 3 offline-verified pending live
 access):
 
 | slug | product | grid | access | verified |
@@ -101,6 +101,7 @@ access):
 | `era5_land` | ECMWF ERA5-Land (0.1°, hourly) | regular | CDS API | live (creds) |
 | `carra` | Copernicus Arctic Regional Reanalysis (2.5 km) | regular† | CDS API | live (creds) |
 | `cerra` | Copernicus European Regional Reanalysis (5.5 km) | regular† | CDS API | live (creds) |
+| `eobs` | E-OBS European gridded **observations** (0.1°/0.25° daily) | regular | CDS API | offline‖ |
 | `merra2` | NASA MERRA-2 (0.5°×0.625°, hourly) | regular | OPeNDAP | live (creds) |
 | `nldas` | NLDAS-2 (0.125°, hourly, CONUS) | regular | OPeNDAP | live (creds) |
 | `gpm` | GPM IMERG Final daily precip (0.1°) | regular | OPeNDAP | live (creds) |
@@ -110,7 +111,7 @@ access):
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-15 of 17 connectors are confirmed against their live stores (the auth-gated ones
+15 of 18 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -127,7 +128,16 @@ mapping is identity. Live-verified against the GES DISC store (variable names,
 `gldas:noah025_3h` (GLDAS-2.1, 2000→present) and `gldas:noah025_3h_v20`
 (GLDAS-2.0, 1948–2014). Wind ships as a scalar speed only (no u/v), so it maps to
 `wind_speed`; opens one OPeNDAP endpoint per 3-hour stamp (8/day), so long ranges
-are slow (warned in the `FetchResult`).
+are slow (warned in the `FetchResult`). ‖ `eobs` fills the European *observational*
+gap (CFS otherwise has only reanalysis there). Unlike the other CDS connectors
+E-OBS has **no server-side `area` subset**, so the full European domain is
+downloaded once per variable (large, cached) and subset locally. It exposes only
+the cleanly-convertible fields — `tg`→air_temperature, `rr`→precipitation_flux,
+`qq`→shortwave, `fg`→wind_speed — and **defers** `pp` (sea-level, not surface,
+pressure) and `hu` (relative humidity needs a surface pressure E-OBS lacks).
+Request tokens (`grid_resolution` `0_1deg`/`0_25deg`, `version` `31_0e`, `period`
+`full_period`) were checked against the live CDS form constraints; a full retrieve
+has not been run end-to-end. Version override via `config={"version": "30_0e"}`.
 
 ### Climate projections (CMIP6)
 
