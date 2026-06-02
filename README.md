@@ -86,7 +86,7 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 32 connectors (30 live-verified: 18 anonymous + 12 auth-gated
+Implemented — 33 connectors (31 live-verified: 19 anonymous + 12 auth-gated
 confirmed with real CDS + Earthdata credentials; 2 offline-verified pending live
 access or provider-specific credentials):
 
@@ -97,6 +97,7 @@ access or provider-specific credentials):
 | `aorc_nwm` | NOAA AORC v1.1 NWM-Projected (1 km) | 2-D LCC | S3 Zarr | live |
 | `nwm_operational` | NOAA NWM operational forcing (1 km, hourly, real-time) | 2-D LCC | S3 NetCDF | live∇ |
 | `gfs` | NOAA GFS atmospheric **forecast** (0.25°, hourly, global) | regular | S3 GRIB2 (byte-range) | live⊗ |
+| `gefs` | NOAA GEFS **ensemble forecast** (0.25°, 3-hourly, global) | regular | S3 GRIB2 (byte-range) | live⊠ |
 | `chirps` | CHIRPS v2.0 daily precip (0.05°) | regular | HTTP NetCDF | live |
 | `chirts` | CHIRTS daily temperature (0.05°, global tropics) | regular | HTTP NetCDF | live |
 | `persiann_cdr` | PERSIANN-CDR daily satellite precip (0.25°, 1983–) | regular | HTTP NetCDF | live |
@@ -125,7 +126,7 @@ access or provider-specific credentials):
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-30 of 32 connectors are confirmed against their live stores (the auth-gated ones
+31 of 33 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -205,6 +206,16 @@ range it uses the most recent 00/06/12/18 UTC cycle at/before the start; valid
 times map to lead hours (1-hourly to f120, 3-hourly to f384). All fields are
 identity SI (u/v winds, `prate` flux); radiation/precip are interval averages,
 absent at f000 (analysis). Live-verified (US, T 292–300 K, SW 80–228 W m⁻²).
+⊠ `gefs` is the **ensemble** companion to `gfs` — same `.idx`/byte-range/cfgrib
+machinery over the GEFS 0.25° select product (`noaa-gefs-pds`), returning a
+`member` dimension (control `gec00` + perturbations `gep01`–`gep30`, selected via
+`config={"members":[…]}`; default all 31). 3-hourly leads. **v1 exposes only the
+instantaneous fields** (air_temperature, surface_air_pressure, eastward/northward
+wind — all identity SI); precip (`APCP`) and radiation (`DSWRF`/`DLWRF`) are
+**deferred** because GEFS accumulates/averages them in 6-hour buckets (0-3, 0-6,
+6-9, …) that need reset-aware differencing, and the select product ships RH not
+specific humidity. Live-verified (2 members × 2 steps; member-to-member spread
+visible in T).
 
 ### Climate projections (CMIP6)
 
