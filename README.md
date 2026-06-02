@@ -86,7 +86,7 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 28 connectors (26 live-verified: 15 anonymous + 11 auth-gated
+Implemented — 31 connectors (29 live-verified: 17 anonymous + 12 auth-gated
 confirmed with real CDS + Earthdata credentials; 2 offline-verified pending live
 access or provider-specific credentials):
 
@@ -97,6 +97,8 @@ access or provider-specific credentials):
 | `aorc_nwm` | NOAA AORC v1.1 NWM-Projected (1 km) | 2-D LCC | S3 Zarr | live |
 | `nwm_operational` | NOAA NWM operational forcing (1 km, hourly, real-time) | 2-D LCC | S3 NetCDF | live∇ |
 | `chirps` | CHIRPS v2.0 daily precip (0.05°) | regular | HTTP NetCDF | live |
+| `chirts` | CHIRTS daily temperature (0.05°, global tropics) | regular | HTTP NetCDF | live |
+| `persiann_cdr` | PERSIANN-CDR daily satellite precip (0.25°, 1983–) | regular | HTTP NetCDF | live |
 | `rdrs` | RDRS / CaSR v3.2 (Canada, ~10 km, hourly) | 2-D rotated pole | OPeNDAP | live |
 | `barra2` | BoM BARRA-R2 (Australia, ~12 km, hourly) | regular | NCI THREDDS ncss | live◊ |
 | `conus404` | CONUS404 (4 km WRF, hourly) | 2-D LCC | OSN Zarr | live |
@@ -113,6 +115,7 @@ access or provider-specific credentials):
 | `cmorph` | NOAA CPC CMORPH CDR daily precip (0.25°) | regular | HTTP tar NetCDF | live※ |
 | `daymet` | Daymet V4R1 (1 km daily, N. America) | 2-D LCC (x/y) | OPeNDAP | live (creds) |
 | `gldas` | NASA GLDAS-2 Noah (0.25°, 3-hourly, global land) | regular | OPeNDAP | live (creds)¶ |
+| `fldas` | NASA FLDAS Noah (0.1°, **monthly**, global/Africa land) | regular | OPeNDAP | live (creds)⊕ |
 | `nex_gddp` | NEX-GDDP-CMIP6 (0.25° daily **projections**) | regular | S3 NetCDF | live |
 | `na_cordex` | NA-CORDEX (0.22°/0.44° daily **projections**, N. America) | regular | S3 Zarr | live |
 | `gridmet` | gridMET daily CONUS surface meteorology (~4 km) | regular | OPeNDAP | live |
@@ -121,7 +124,7 @@ access or provider-specific credentials):
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-26 of 28 connectors are confirmed against their live stores (the auth-gated ones
+29 of 31 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -183,7 +186,16 @@ offered — NA-CORDEX lacks the surface pressure needed to derive specific humid
 generating lat/lon from the same 1 km LCC projection as `aorc_nwm`. Only the
 `analysis_assim` configuration is exposed (the `tm00` analysis maps cleanly to a
 valid time); the bucket keeps only a **rolling ~4-week** window, so fetches must
-target recent dates.
+target recent dates. `chirts` is the temperature companion to `chirps` (UCSB CHC,
+global tropics 0.05° daily, 1983–2016): `Tmax`/`Tmin` (°C) → `air_temperature`
+= mean+273.15, read via HTTP byte-range from the per-year chunked NetCDFs.
+`persiann_cdr` is a global daily satellite-precip CDR (NCEI, 0.25°, 1983→present
+with multi-week latency); per-day files carry an unpredictable creation-date
+suffix, so the connector resolves filenames from each year's directory index.
+⊕ `fldas` (NASA FLDAS Noah, FEWS NET) reuses the GLDAS Earthdata/DAP4 path and is
+all-identity SI, but the global product is **monthly** — good for climatology /
+seasonal forcing over Africa and the global land surface, too coarse for
+event-scale hydrology. Wind is a scalar speed (no u/v); land-only (ocean is fill).
 
 ### Climate projections (CMIP6)
 

@@ -1,7 +1,7 @@
 # CFS Provider Inventory
-# Total providers: 28 — 26 live-verified + 2 offline/access-gated.
-# Latest salvaged batch: na_cordex + nwm_operational (new, live-verified). cfsr
-# was dropped again (NOMADS is not a CFSR archive; the DODS endpoint is dead).
+# Total providers: 31 — 29 live-verified + 2 offline/access-gated.
+# Coverage batch: chirts (CHIRPS temperature twin) + persiann_cdr (satellite
+# precip CDR) + fldas (Africa/global land, monthly) — all new, live-verified.
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
@@ -624,6 +624,63 @@
     - surface_downwelling_longwave_flux
     - precipitation_flux
   note: "Only analysis_assim exposed (tm00 file = forcing at valid time); short/medium-range forecasts out of scope. lat/lon generated from the 1km LCC projection (LDASIN has only x/y). Rolling ~4-week archive. LIVE-VERIFIED (CONUS 2026-05-28: T 293-301 K, precip <=6.6 mm/h)."
+  status: implemented
+
+- slug: chirts
+  name: CHIRTS daily temperature (0.05°, global tropics, via HTTP)
+  protocol: http
+  base_url: https://data.chc.ucsb.edu/products/CHIRTSdaily/v1.0/global_netcdf_p05
+  resolution_deg: 0.05
+  grid: regular
+  auth: anonymous
+  bbox: [-180.0, -60.0, 180.0, 70.0]
+  temporal_resolution: daily
+  license: "CHIRTS provided without restriction (CHG/UCSB)."
+  citation: "Funk et al. (2019), CHIRTS-daily, Scientific Data."
+  products: 1
+  canonical_variables:
+    - air_temperature       # mean(Tmax,Tmin) C +273.15
+  note: "Temperature companion to CHIRPS. Per-year, per-variable chunked NetCDFs (Tmax/Tmin, degC) opened lazily over HTTP byte-range. v1.0 covers 1983-2016. LIVE-VERIFIED (East Africa 2016: 278-304 K)."
+  status: implemented
+
+- slug: persiann_cdr
+  name: PERSIANN-CDR daily satellite precipitation (0.25°, via HTTP)
+  protocol: http
+  base_url: https://www.ncei.noaa.gov/data/precipitation-persiann/access
+  resolution_deg: 0.25
+  grid: regular            # 0-360 longitude, normalized on subset
+  auth: anonymous
+  bbox: [-180.0, -60.0, 180.0, 60.0]
+  temporal_resolution: daily
+  license: "NOAA/NCEI public data."
+  citation: "Ashouri et al. (2015), PERSIANN-CDR, BAMS 96:69-83."
+  products: 1
+  canonical_variables:
+    - precipitation_flux    # precipitation mm/day /86400
+  note: "Global daily satellite precip CDR, 1983-present (multi-week latency). Per-day files carry an unpredictable creation-date suffix, so filenames are resolved from each year's HTML directory index. var 'precipitation' (mm), dims (time,lon,lat) re-oriented. LIVE-VERIFIED (Indonesia 2016: <=45 mm/day)."
+  status: implemented
+
+- slug: fldas
+  name: NASA FLDAS Noah (0.1° monthly, global/Africa land, via OPeNDAP)
+  protocol: opendap
+  base_url: https://hydro1.gesdisc.eosdis.nasa.gov/opendap/FLDAS
+  resolution_deg: 0.1
+  grid: regular            # X/Y coord names
+  auth: earthdata
+  bbox: [-180.0, -60.0, 180.0, 90.0]
+  temporal_resolution: monthly
+  license: "NASA public data (open)."
+  citation: "McNally et al. (2017), FLDAS, Scientific Data 4:170012."
+  products: 1
+  canonical_variables:
+    - air_temperature       # Tair_f_tavg (identity, K)
+    - specific_humidity     # Qair_f_tavg
+    - surface_air_pressure  # Psurf_f_tavg
+    - wind_speed            # Wind_f_tavg (scalar, no u/v)
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+    - precipitation_flux    # Rainf_f_tavg (already a flux, identity)
+  note: "FEWS NET LDAS, FLDAS_NOAH01_C_GL_M.001. Reuses the GLDAS Earthdata/DAP4 mixin; all identity SI. MONTHLY only (no daily on this Hyrax) - climatology/seasonal, too coarse for event-scale. Land-only (ocean fill). LIVE-VERIFIED (East Africa 2020-01: T 277-300 K)."
   status: implemented
 
 # ── Migration backlog (handlers to port from SYMFLUENCE) ───────────────
