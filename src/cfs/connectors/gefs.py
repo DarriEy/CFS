@@ -12,15 +12,26 @@ fields at 3-hourly lead times (f000…f384). Forecast/cycle handling is identica
 GFS: the most recent 00/06/12/18 UTC cycle at/before the range start, valid times
 mapped to (3-hourly) lead hours.
 
-Variable scope (v1, deliberately conservative): the **instantaneous** surface
-fields are exposed — ``TMP`` 2 m → air_temperature, ``PRES`` surface →
-surface_air_pressure, ``UGRD``/``VGRD`` 10 m → eastward/northward_wind — all
-identity SI. Precipitation (``APCP``) and radiation (``DSWRF``/``DLWRF``) are
-**deferred**: GEFS accumulates/averages them in **6-hour buckets** (0-3, 0-6, 6-9,
-6-12, …), so a correct per-interval flux needs reset-aware differencing within each
-bucket — a focused follow-up rather than a risky conversion here. GEFS-select also
-ships relative humidity (not specific humidity), so specific_humidity is not
-offered either.
+Instantaneous fields are identity SI — ``TMP`` 2 m → air_temperature, ``PRES``
+surface → surface_air_pressure, ``UGRD``/``VGRD`` 10 m → eastward/northward_wind.
+
+Precipitation and radiation need **bucket-aware de-accumulation**. GEFS-select
+ships them as 6-hour-bucket quantities at 3-hourly leads: ``APCP`` *accumulates*
+(``0-3``, ``0-6``, ``6-9``, ``6-12``, …) and ``DSWRF``/``DLWRF`` *average* over the
+same buckets. The generic reset-by-sign de-accumulator is unsafe here — a fresh
+bucket with heavier precip than the previous bucket's total keeps the diff positive
+and the reset goes undetected — so the bucket boundary is taken deterministically
+from the lead hour instead. With all leads a multiple of 3, a lead is either the
+**first** half of its bucket (``lead % 6 == 3``: ``0-3``, ``6-9`` … — already the
+per-3 h quantity) or the **second** (``lead % 6 == 0``: ``0-6``, ``6-12`` … — the
+full bucket), where the per-interval ``[lead-3, lead]`` value is recovered from the
+first-half field of the *same* bucket: ``cur - prev`` for accumulations, ``2*cur -
+prev`` for averages. ``APCP`` (kg m⁻² over the 3 h interval) is then divided by the
+interval to a flux (kg m⁻² s⁻¹, matching ``gfs``'s ``PRATE``); de-averaged
+``DSWRF``/``DLWRF`` are already W m⁻² (identity). All are absent at f000 (analysis).
+
+GEFS-select ships relative humidity (not specific humidity), so specific_humidity
+is not offered.
 
 Members are selected via ``config={"members": [...]}`` (default: control + all 30
 perturbations). The ensemble is the point, but a full 31-member pull is many
@@ -63,7 +74,7 @@ S3_BASE = "https://noaa-gefs-pds.s3.amazonaws.com"
 # Default ensemble: control + 30 perturbations.
 _ALL_MEMBERS = ["gec00"] + [f"gep{i:02d}" for i in range(1, 31)]
 
-# Instantaneous surface fields only (identity SI); .idx level strings matched exactly.
+# Instantaneous surface fields (identity SI); .idx level strings matched exactly.
 # (var, level, canonical, internal-name)
 _VARS = [
     ("TMP", "2 m above ground", CanonicalVar.AIR_TEMPERATURE, "_t2m"),
@@ -71,9 +82,30 @@ _VARS = [
     ("UGRD", "10 m above ground", CanonicalVar.EASTWARD_WIND, "_u10"),
     ("VGRD", "10 m above ground", CanonicalVar.NORTHWARD_WIND, "_v10"),
 ]
-_MAPPINGS: list[VariableMapping] = [VariableMapping(internal, canon) for _, _, canon, internal in _VARS]
 
-_MAX_LEAD = 384  # 3-hourly
+# Bucket-averaged/accumulated surface fields; de-bucketed per-interval before
+# unit conversion. (var, level, canonical, internal-name, kind) where kind is
+# "acc" (accumulation → cur-prev) or "ave" (average → 2*cur-prev).
+_INTERVAL_S = 3 * 3600  # 3-hourly leads
+_FLUX_VARS = [
+    ("APCP", "surface", CanonicalVar.PRECIPITATION_FLUX, "_apcp", "acc"),
+    ("DSWRF", "surface", CanonicalVar.SHORTWAVE_RADIATION_DOWN, "_dswrf", "ave"),
+    ("DLWRF", "surface", CanonicalVar.LONGWAVE_RADIATION_DOWN, "_dlwrf", "ave"),
+]
+
+_MAPPINGS: list[VariableMapping] = [
+    VariableMapping(internal, canon) for _, _, canon, internal in _VARS
+] + [
+    # APCP is de-bucketed to a kg m-2 increment over the 3 h interval here, then
+    # divided to a flux; radiation is already a mean W m-2 (identity).
+    VariableMapping("_apcp", CanonicalVar.PRECIPITATION_FLUX, scale=1.0 / _INTERVAL_S),
+    VariableMapping("_dswrf", CanonicalVar.SHORTWAVE_RADIATION_DOWN),
+    VariableMapping("_dlwrf", CanonicalVar.LONGWAVE_RADIATION_DOWN),
+]
+
+# pgrb2sp25 (the 0.25° select product) is produced 3-hourly to f240 only — f243+
+# do not exist (the coarser products run longer). Live-confirmed against the S3 idx.
+_MAX_LEAD = 240
 
 
 def _lead_available(lead: int) -> bool:
@@ -111,6 +143,24 @@ def _open_message(raw: bytes, internal: str):
     return ds.drop_vars(drop, errors="ignore")
 
 
+def _byte_range(idx, grib_var: str, grib_level: str):
+    """Locate (start, end) byte range of one (var, level) message in a parsed idx."""
+    for i, (v, lv, sb) in enumerate(idx):
+        if v == grib_var and lv == grib_level:
+            return sb, (idx[i + 1][2] - 1 if i + 1 < len(idx) else "")
+    return None
+
+
+def _read_field(url: str, idx, grib_var: str, grib_level: str, internal: str, bbox):
+    """Byte-range fetch + decode + bbox-subset one (var, level) field, or None."""
+    rng = _byte_range(idx, grib_var, grib_level)
+    if rng is None:
+        return None
+    ds = _open_message(_http_range(url, rng[0], rng[1]), internal)
+    plan = plan_bbox_subset(ds, bbox, lat_name="latitude", lon_name="longitude")
+    return apply_bbox_subset(ds, plan, lat_name="latitude", lon_name="longitude")
+
+
 @register("gefs")
 class GEFSConnector(BaseForcingConnector):
     slug = "gefs"
@@ -132,7 +182,8 @@ class GEFSConnector(BaseForcingConnector):
                     "NOAA Global Ensemble Forecast System surface forcing (0.25° "
                     "select product), byte-range read from the GRIB2 files on the "
                     "noaa-gefs-pds S3 archive. Returns a member dimension (control + "
-                    "perturbations). Instantaneous fields only in v1."
+                    "perturbations). Instantaneous fields plus bucket-de-accumulated "
+                    "precipitation_flux and down shortwave/longwave radiation."
                 ),
                 variables=[
                     ProductVariable(canonical=m.canonical, source_name=m.source_name)
@@ -175,8 +226,9 @@ class GEFSConnector(BaseForcingConnector):
         self._require_cfgrib()
 
         wanted = set(variables) if variables else None
-        selected = [v for v in _VARS if wanted is None or v[2] in wanted]
-        if not selected:
+        selected_inst = [v for v in _VARS if wanted is None or v[2] in wanted]
+        selected_flux = [v for v in _FLUX_VARS if wanted is None or v[2] in wanted]
+        if not selected_inst and not selected_flux:
             raise SubsetError("None of the requested variables are offered by GEFS")
         if not self.members:
             raise SubsetError("GEFS member list is empty")
@@ -192,19 +244,29 @@ class GEFSConnector(BaseForcingConnector):
                 return None
             url = _file_url(member, cycle, lead)
             idx = _parse_idx(_http_range(url + ".idx", 0, "").decode())
-            per_var = []
-            for gv, gl, _canon, internal in selected:
-                rng = None
-                for i, (v, lv, sb) in enumerate(idx):
-                    if v == gv and lv == gl:
-                        end = idx[i + 1][2] - 1 if i + 1 < len(idx) else ""
-                        rng = (sb, end)
-                        break
-                if rng is None:
-                    continue
-                ds = _open_message(_http_range(url, rng[0], rng[1]), internal)
-                plan = plan_bbox_subset(ds, bbox, lat_name="latitude", lon_name="longitude")
-                per_var.append(apply_bbox_subset(ds, plan, lat_name="latitude", lon_name="longitude"))
+            per_var = [
+                f for gv, gl, _c, internal in selected_inst
+                if (f := _read_field(url, idx, gv, gl, internal, bbox)) is not None
+            ]
+            # Precip/radiation are bucket quantities (none at f000): de-bucket the
+            # per-interval value, fetching the bucket's first-half field when the
+            # lead is a second-half step (lead % 6 == 0).
+            if selected_flux and lead > 0:
+                second_half = lead % 6 == 0
+                idx_prev = url_prev = None
+                if second_half:
+                    url_prev = _file_url(member, cycle, lead - 3)
+                    idx_prev = _parse_idx(_http_range(url_prev + ".idx", 0, "").decode())
+                for gv, gl, _c, internal, kind in selected_flux:
+                    cur = _read_field(url, idx, gv, gl, internal, bbox)
+                    if cur is None:
+                        continue
+                    if second_half:
+                        prev = _read_field(url_prev, idx_prev, gv, gl, internal, bbox)
+                        if prev is None:
+                            continue  # cannot de-bucket without the first half
+                        cur = cur - prev if kind == "acc" else 2 * cur - prev
+                    per_var.append(cur.clip(min=0))
             if not per_var:
                 return None
             return xr.merge(per_var, join="inner").expand_dims(time=[pd.Timestamp(valid)])
@@ -235,7 +297,8 @@ class GEFSConnector(BaseForcingConnector):
             time_range=time_range,
             provenance=(
                 f"GEFS pgrb2s.0p25 via noaa-gefs-pds S3 byte-range (cfgrib); "
-                f"cycle {cycle:%Y%m%d %Hz}; {len(member_cubes)} members; canonical-v1"
+                f"cycle {cycle:%Y%m%d %Hz}; {len(member_cubes)} members; "
+                f"precip/radiation bucket-de-accumulated to 3 h intervals; canonical-v1"
             ),
             t0=t0,
             settings=settings,

@@ -209,13 +209,17 @@ absent at f000 (analysis). Live-verified (US, T 292–300 K, SW 80–228 W m⁻�
 ⊠ `gefs` is the **ensemble** companion to `gfs` — same `.idx`/byte-range/cfgrib
 machinery over the GEFS 0.25° select product (`noaa-gefs-pds`), returning a
 `member` dimension (control `gec00` + perturbations `gep01`–`gep30`, selected via
-`config={"members":[…]}`; default all 31). 3-hourly leads. **v1 exposes only the
-instantaneous fields** (air_temperature, surface_air_pressure, eastward/northward
-wind — all identity SI); precip (`APCP`) and radiation (`DSWRF`/`DLWRF`) are
-**deferred** because GEFS accumulates/averages them in 6-hour buckets (0-3, 0-6,
-6-9, …) that need reset-aware differencing, and the select product ships RH not
-specific humidity. Live-verified (2 members × 2 steps; member-to-member spread
-visible in T).
+`config={"members":[…]}`; default all 31). 3-hourly leads to f240 (the select
+product stops there). Instantaneous fields are identity SI (air_temperature,
+surface_air_pressure, eastward/northward wind). Precip (`APCP`) and radiation
+(`DSWRF`/`DLWRF`) ship as 6-hour-bucket quantities (`0-3`, `0-6`, `6-9`, …) —
+`APCP` accumulates, radiation averages — so they are **de-bucketed by lead hour**
+(value-sign reset detection is unsafe when a fresh bucket out-rains the previous
+one): `cur-prev` for accumulations, `2·cur-prev` for averages, then `APCP` → a flux
+(kg m⁻² s⁻¹, like `gfs`'s `prate`) while radiation stays W m⁻². The select product
+ships RH not specific humidity, so `q` is not offered. Live-verified (2 members × 4
+steps: precip 0–9 mm/hr non-negative, SW correctly ~0 W m⁻² overnight after
+de-averaging, member-to-member spread visible).
 
 ### Climate projections (CMIP6)
 
