@@ -63,6 +63,7 @@ _FIELDS: list[tuple[str, str, CanonicalVar]] = [
     ("10m_above_ground", "VGRD", CanonicalVar.NORTHWARD_WIND),
     ("surface", "DSWRF", CanonicalVar.SHORTWAVE_RADIATION_DOWN),
     ("surface", "DLWRF", CanonicalVar.LONGWAVE_RADIATION_DOWN),
+    ("surface", "PRATE", CanonicalVar.PRECIPITATION_FLUX),
 ]
 _MAPPINGS: list[VariableMapping] = [VariableMapping(var, canon) for _, var, canon in _FIELDS]
 
@@ -70,7 +71,7 @@ _MAPPINGS: list[VariableMapping] = [VariableMapping(var, canon) for _, var, cano
 @register("hrrr")
 class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
     slug = "hrrr"
-    display_name = "NOAA HRRR analysis (3 km, hourly)"
+    display_name = "NOAA HRRR (3 km, hourly)"
     base_url = f"s3://{SFC_PREFIX}"
     protocol = "zarr"
 
@@ -91,9 +92,29 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
                 ),
                 variables=[
                     ProductVariable(canonical=m.canonical, source_name=m.source_name)
-                    for m in _MAPPINGS
+                    for m in _MAPPINGS if m.canonical != CanonicalVar.PRECIPITATION_FLUX
                 ],
                 resolution_deg=0.027,  # ~3 km
+                crs="EPSG:4326",
+                bbox=BoundingBox(min_lon=-134.1, min_lat=21.1, max_lon=-60.9, max_lat=52.6),
+                temporal=TemporalExtent(resolution=TemporalResolution.HOURLY),
+                protocol=Protocol.ZARR,
+                license="U.S. Government work / NOAA Open Data (public domain)",
+                citation="NOAA NCEP High-Resolution Rapid Refresh (HRRR); hrrrzarr archive.",
+            ),
+            ForcingProduct(
+                id=f"{self.slug}:sfc_fcst",
+                provider=self.slug,
+                name="HRRR surface forecast (3 km, hourly)",
+                description=(
+                    "NOAA High-Resolution Rapid Refresh forecast (1-hour lead) from "
+                    "the public hrrrzarr archive; includes precipitation flux."
+                ),
+                variables=[
+                    ProductVariable(canonical=m.canonical, source_name=m.source_name)
+                    for m in _MAPPINGS
+                ],
+                resolution_deg=0.027,
                 crs="EPSG:4326",
                 bbox=BoundingBox(min_lon=-134.1, min_lat=21.1, max_lon=-60.9, max_lat=52.6),
                 temporal=TemporalExtent(resolution=TemporalResolution.HOURLY),
@@ -125,10 +146,16 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
         settings = get_settings()
         self._guard_area(bbox, settings)
 
+        is_fcst = product_id.endswith(":sfc_fcst")
         wanted = set(variables) if variables else None
-        if wanted is not None and CanonicalVar.PRECIPITATION_FLUX in wanted:
-            raise SubsetError("HRRR analysis carries no precipitation_flux")
+        if not is_fcst and wanted is not None and CanonicalVar.PRECIPITATION_FLUX in wanted:
+            raise SubsetError("HRRR analysis carries no precipitation_flux; use hrrr:sfc_fcst")
+        
         selected = [f for f in _FIELDS if wanted is None or f[2] in wanted]
+        # PRATE is only in fcst.
+        if not is_fcst:
+            selected = [f for f in selected if f[2] != CanonicalVar.PRECIPITATION_FLUX]
+
         if not selected:
             raise SubsetError("None of the requested variables are offered by HRRR")
 
@@ -143,22 +170,36 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
 
         def _piece(ts):
             day = ts.strftime("%Y%m%d")
-            zbase = f"{SFC_PREFIX}/{day}/{day}_{ts.hour:02d}z_anl.zarr"
+            suffix = "fcst" if is_fcst else "anl"
+            zbase = f"{SFC_PREFIX}/{day}/{day}_{ts.hour:02d}z_{suffix}.zarr"
             data_vars = {}
             for level, var, _canon in selected:
+                # In fcst, PRATE is usually at f01 (1-hour lead).
                 path = f"{zbase}/{level}/{var}/{level}"
                 try:
                     da = self._open_s3_zarr(path, anonymous=True, consolidated=False)[var]
+                    # If it's a forecast, it might have a 'step' or 'time' dim.
+                    # hrrrzarr fcst often has dims (step, y, x). We want step=1 (1-hour lead).
+                    if "step" in da.dims:
+                        da = da.sel(step=pd.Timedelta(hours=1))
+                    
                     da = da.rename({_PROJ_Y: "y", _PROJ_X: "x"}).isel(y=ys, x=xs).astype("float32")
                     data_vars[var] = da
                 except Exception as e:  # noqa: BLE001 - skip a missing/failed field
                     # list.append is atomic under the GIL — safe from worker threads.
-                    warnings.append(f"{var}@{level} {ts:%Y-%m-%dT%H} unavailable: {type(e).__name__}")
+                    warnings.append(f"{var}@{level} {ts:%Y-%m-%dT%H} ({suffix}) unavailable: {type(e).__name__}")
             if not data_vars:
                 return None
             ds = xr.Dataset(data_vars).assign_coords(
                 latitude=(("y", "x"), lat_w), longitude=(("y", "x"), lon_w)
-            ).expand_dims(time=[pd.Timestamp(ts)])
+            )
+            # Forecast arrays may already carry a (length-1) time/step dim; collapse
+            # any leftover non-spatial dims, then stamp the hour. Analysis arrays are
+            # plain (y, x) and just get the time dim added.
+            extra = [d for d in ds.dims if d not in ("y", "x")]
+            if extra:
+                ds = ds.isel({d: 0 for d in extra}, drop=True)
+            ds = ds.expand_dims(time=[pd.Timestamp(ts)])
             return ds.load()
 
         pieces = await self._gather_pieces([lambda ts=ts: _piece(ts) for ts in hours])

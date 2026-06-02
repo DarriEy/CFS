@@ -23,10 +23,13 @@ def test_registered():
     assert "hrrr" in list_providers()
 
 
-def test_all_identity_no_precip():
+def test_all_identity_mappings():
+    # Every HRRR field is already canonical SI → identity.
     assert all(m.scale == 1.0 and not m.deaccumulate for m in _MAPPINGS)
+    # PRATE is offered (precip), but only via the forecast product — the analysis
+    # product rejects a precip request (see test_precip_request_rejected).
     canon = {f[2] for f in _FIELDS}
-    assert CanonicalVar.PRECIPITATION_FLUX not in canon  # analysis has no precip
+    assert CanonicalVar.PRECIPITATION_FLUX in canon
 
 
 async def test_precip_request_rejected():

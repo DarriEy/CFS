@@ -46,6 +46,8 @@ _VARS: list[_NarrVar] = [
     _NarrVar("uwnd.10m", "uwnd", CanonicalVar.EASTWARD_WIND),
     _NarrVar("vwnd.10m", "vwnd", CanonicalVar.NORTHWARD_WIND),
     _NarrVar("prate", "prate", CanonicalVar.PRECIPITATION_FLUX),
+    _NarrVar("dswrf", "dswrf", CanonicalVar.SHORTWAVE_RADIATION_DOWN),
+    _NarrVar("dlwrf", "dlwrf", CanonicalVar.LONGWAVE_RADIATION_DOWN),
 ]
 
 _MAPPINGS: list[VariableMapping] = [VariableMapping(v.nc_name, v.canonical) for v in _VARS]
