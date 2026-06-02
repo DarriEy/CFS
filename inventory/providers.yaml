@@ -1,7 +1,8 @@
 # CFS Provider Inventory
 # Total providers: 33 — 31 live-verified + 2 offline/access-gated.
 # Forecasts: gfs (deterministic) + gefs (ensemble, member dim) via S3 GRIB2
-# byte-range + cfgrib. gefs v1 is instantaneous-only (precip/radiation deferred).
+# byte-range + cfgrib. gefs exposes instantaneous fields plus bucket-de-accumulated
+# precip + down shortwave/longwave radiation.
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
@@ -725,7 +726,10 @@
     - surface_air_pressure  # PRES surface
     - eastward_wind         # UGRD 10 m
     - northward_wind        # VGRD 10 m
-  note: "Ensemble companion to gfs (same .idx/byte-range/cfgrib machinery), pgrb2sp25 select product, returns a member dim. v1 = INSTANTANEOUS fields only; precip (APCP) + radiation (DSWRF/DLWRF) DEFERRED (6-hour accumulation/averaging buckets need reset-aware differencing); RH not specific humidity. LIVE-VERIFIED (2 members x 2 steps, member spread in T)."
+    - precipitation_flux    # APCP surface, bucket-de-accumulated -> kg m-2 s-1
+    - surface_downwelling_shortwave_flux  # DSWRF surface, bucket-de-averaged
+    - surface_downwelling_longwave_flux   # DLWRF surface, bucket-de-averaged
+  note: "Ensemble companion to gfs (same .idx/byte-range/cfgrib machinery), pgrb2sp25 select product (3-hourly to f240), returns a member dim. Instantaneous fields identity SI; precip (APCP, accumulation) + radiation (DSWRF/DLWRF, average) ship as 6-hour buckets (0-3,0-6,6-9,...) DE-BUCKETED by lead hour (cur-prev for acc, 2*cur-prev for ave) -> APCP to flux, radiation W m-2; value-sign reset detection unsafe here. RH not specific humidity. LIVE-VERIFIED (2 members x 4 steps, precip non-negative 0-9 mm/hr, SW ~0 overnight after de-averaging, member spread)."
   status: implemented
 
 # ── Migration backlog (handlers to port from SYMFLUENCE) ───────────────
