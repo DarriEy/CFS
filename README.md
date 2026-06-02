@@ -86,7 +86,7 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 31 connectors (29 live-verified: 17 anonymous + 12 auth-gated
+Implemented — 32 connectors (30 live-verified: 18 anonymous + 12 auth-gated
 confirmed with real CDS + Earthdata credentials; 2 offline-verified pending live
 access or provider-specific credentials):
 
@@ -96,6 +96,7 @@ access or provider-specific credentials):
 | `aorc` | NOAA AORC v1.1 (1 km, hourly) | regular | S3 Zarr | live |
 | `aorc_nwm` | NOAA AORC v1.1 NWM-Projected (1 km) | 2-D LCC | S3 Zarr | live |
 | `nwm_operational` | NOAA NWM operational forcing (1 km, hourly, real-time) | 2-D LCC | S3 NetCDF | live∇ |
+| `gfs` | NOAA GFS atmospheric **forecast** (0.25°, hourly, global) | regular | S3 GRIB2 (byte-range) | live⊗ |
 | `chirps` | CHIRPS v2.0 daily precip (0.05°) | regular | HTTP NetCDF | live |
 | `chirts` | CHIRTS daily temperature (0.05°, global tropics) | regular | HTTP NetCDF | live |
 | `persiann_cdr` | PERSIANN-CDR daily satellite precip (0.25°, 1983–) | regular | HTTP NetCDF | live |
@@ -124,7 +125,7 @@ access or provider-specific credentials):
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-29 of 31 connectors are confirmed against their live stores (the auth-gated ones
+30 of 32 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -196,6 +197,14 @@ suffix, so the connector resolves filenames from each year's directory index.
 all-identity SI, but the global product is **monthly** — good for climatology /
 seasonal forcing over Africa and the global land surface, too coarse for
 event-scale hydrology. Wind is a scalar speed (no u/v); land-only (ocean is fill).
+⊗ `gfs` is the first **forecast** connector: global 0.25° GFS surface forcing from
+the `noaa-gfs-bdp-pds` S3 GRIB2 archive. It reads the `.idx` byte-offset index and
+HTTP **byte-range** fetches only the surface messages it needs (~MB, not the ~1.5 GB
+whole file), decoding each with `cfgrib` (the `forecast` extra). For a requested
+range it uses the most recent 00/06/12/18 UTC cycle at/before the start; valid
+times map to lead hours (1-hourly to f120, 3-hourly to f384). All fields are
+identity SI (u/v winds, `prate` flux); radiation/precip are interval averages,
+absent at f000 (analysis). Live-verified (US, T 292–300 K, SW 80–228 W m⁻²).
 
 ### Climate projections (CMIP6)
 
