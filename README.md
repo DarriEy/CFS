@@ -217,9 +217,11 @@ surface_air_pressure, eastward/northward wind). Precip (`APCP`) and radiation
 (value-sign reset detection is unsafe when a fresh bucket out-rains the previous
 one): `cur-prev` for accumulations, `2·cur-prev` for averages, then `APCP` → a flux
 (kg m⁻² s⁻¹, like `gfs`'s `prate`) while radiation stays W m⁻². The select product
-ships RH not specific humidity, so `q` is not offered. Live-verified (2 members × 4
-steps: precip 0–9 mm/hr non-negative, SW correctly ~0 W m⁻² overnight after
-de-averaging, member-to-member spread visible).
+ships RH not specific humidity, so `q` is **derived** from 2 m RH + temperature +
+pressure (Bolton 1980, via `cfs.derive.humidity`); RH is fetched only as a
+derivation input, never exposed raw. Live-verified (precip 0–9 mm/hr non-negative,
+SW correctly ~0 W m⁻² overnight after de-averaging, derived `q` 9–17 g/kg, member
+spread visible).
 
 ### Climate projections (CMIP6)
 
