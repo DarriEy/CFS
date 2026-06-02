@@ -86,7 +86,7 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-Implemented — 26 connectors (24 live-verified: 13 anonymous + 11 auth-gated
+Implemented — 28 connectors (26 live-verified: 15 anonymous + 11 auth-gated
 confirmed with real CDS + Earthdata credentials; 2 offline-verified pending live
 access or provider-specific credentials):
 
@@ -95,6 +95,7 @@ access or provider-specific credentials):
 | `era5_arco` | ECMWF ERA5 (0.25°, hourly) | regular | GCS Zarr | live |
 | `aorc` | NOAA AORC v1.1 (1 km, hourly) | regular | S3 Zarr | live |
 | `aorc_nwm` | NOAA AORC v1.1 NWM-Projected (1 km) | 2-D LCC | S3 Zarr | live |
+| `nwm_operational` | NOAA NWM operational forcing (1 km, hourly, real-time) | 2-D LCC | S3 NetCDF | live∇ |
 | `chirps` | CHIRPS v2.0 daily precip (0.05°) | regular | HTTP NetCDF | live |
 | `rdrs` | RDRS / CaSR v3.2 (Canada, ~10 km, hourly) | 2-D rotated pole | OPeNDAP | live |
 | `barra2` | BoM BARRA-R2 (Australia, ~12 km, hourly) | regular | NCI THREDDS ncss | live◊ |
@@ -113,13 +114,14 @@ access or provider-specific credentials):
 | `daymet` | Daymet V4R1 (1 km daily, N. America) | 2-D LCC (x/y) | OPeNDAP | live (creds) |
 | `gldas` | NASA GLDAS-2 Noah (0.25°, 3-hourly, global land) | regular | OPeNDAP | live (creds)¶ |
 | `nex_gddp` | NEX-GDDP-CMIP6 (0.25° daily **projections**) | regular | S3 NetCDF | live |
+| `na_cordex` | NA-CORDEX (0.22°/0.44° daily **projections**, N. America) | regular | S3 Zarr | live |
 | `gridmet` | gridMET daily CONUS surface meteorology (~4 km) | regular | OPeNDAP | live |
 | `nclimgrid_daily` | NOAA nClimGrid-Daily (5 km, CONUS) | regular | OPeNDAP | live |
 | `narr` | NOAA NARR daily monolevel fields (32 km) | 2-D LCC | OPeNDAP | live |
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | offline‡ |
 | `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 (cred-gated) | offline§ |
 
-24 of 26 connectors are confirmed against their live stores (the auth-gated ones
+26 of 28 connectors are confirmed against their live stores (the auth-gated ones
 with real CDS + Earthdata credentials). † `carra`/`cerra` are interpolated to a
 regular grid via the CDS `grid` parameter. ‡ `mswep` is distributed only via a
 GloH2O-shared Google Drive folder, reached through the external `rclone` CLI — so
@@ -171,7 +173,17 @@ grid (S3 Zarr; lat/lon generated from the LCC projection). `era5_cds` provides
 standard ERA5 single-levels via the CDS API (zip of instant+accum NetCDFs merged)
 as a credentialed alternative to the anonymous `era5_arco`. `narr` adds `dswrf`/
 `dlwrf` (down short/longwave) radiation, live-verified against NOAA PSL (Nebraska
-Jun 2020: SW 358–379, LW 353–366 W m⁻²).
+Jun 2020: SW 358–379, LW 353–366 W m⁻²). `na_cordex` serves North-American CORDEX
+regional **climate projections** (S3 Zarr, NCAR `ncar-na-cordex`): experiments
+`eval`/`hist-rcp45`/`hist-rcp85`, with grid (`NAM-22i`/`NAM-44i`) and
+bias-correction (`raw`/`mbcn-Daymet`/`mbcn-gridMET`) as `config` knobs; returns the
+CORDEX multi-model ensemble (`member_id` dim). `hurs` (relative humidity) is not
+offered — NA-CORDEX lacks the surface pressure needed to derive specific humidity.
+∇ `nwm_operational` reads the real-time NWM forcing from `noaa-nwm-pds` (S3),
+generating lat/lon from the same 1 km LCC projection as `aorc_nwm`. Only the
+`analysis_assim` configuration is exposed (the `tm00` analysis maps cleanly to a
+valid time); the bucket keeps only a **rolling ~4-week** window, so fetches must
+target recent dates.
 
 ### Climate projections (CMIP6)
 
