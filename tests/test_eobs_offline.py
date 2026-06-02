@@ -22,8 +22,8 @@ def test_registered():
 
 
 async def test_eobs_lists_both_grids():
-    Conn = get_connector("eobs")
-    async with Conn() as conn:
+    conn_cls = get_connector("eobs")
+    async with conn_cls() as conn:
         ids = {p.id for p in await conn.list_products()}
     assert ids == {"eobs:ensemble_mean_0.1deg", "eobs:ensemble_mean_0.25deg"}
 
@@ -43,9 +43,9 @@ def test_eobs_exposes_only_clean_vars():
 
 
 def test_eobs_version_override():
-    Conn = get_connector("eobs")
-    assert Conn()._version == "31_0e"  # CDS tokens use underscores
-    assert Conn(config={"version": "30_0e"})._version == "30_0e"
+    conn_cls = get_connector("eobs")
+    assert conn_cls()._version == "31_0e"  # CDS tokens use underscores
+    assert conn_cls(config={"version": "30_0e"})._version == "30_0e"
 
 
 def test_eobs_grid_tokens_use_underscores():

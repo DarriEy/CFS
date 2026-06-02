@@ -37,8 +37,8 @@ def test_gldas_url_structure_v20():
 
 
 async def test_gldas_lists_both_collections():
-    Conn = get_connector("gldas")
-    async with Conn() as conn:
+    conn_cls = get_connector("gldas")
+    async with conn_cls() as conn:
         ids = {p.id for p in await conn.list_products()}
     assert ids == {"gldas:noah025_3h", "gldas:noah025_3h_v20"}
 

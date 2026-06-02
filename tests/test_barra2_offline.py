@@ -51,8 +51,8 @@ def test_barra2_single_month():
 
 
 async def test_barra2_one_product():
-    Conn = get_connector("barra2")
-    async with Conn() as conn:
+    conn_cls = get_connector("barra2")
+    async with conn_cls() as conn:
         prods = await conn.list_products()
     assert [p.id for p in prods] == ["barra2:barra_r2"]
 
