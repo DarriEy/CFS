@@ -84,6 +84,13 @@ Changelog = "https://github.com/DarriEy/CFS/blob/main/CHANGELOG.md"
 [project.scripts]
 cfs = "cfs.cli.main:cli"
 
+# SYMFLUENCE auto-discovers this on `import symfluence` and calls the zero-arg
+# register(), which adds the CFS acquisition + dataset handlers. SYMFLUENCE is
+# deliberately NOT a dependency (not even optional): the plugin only activates
+# when SYMFLUENCE is installed and imports this entry point itself.
+[project.entry-points."symfluence.plugins"]
+cfs = "cfs.integrations.symfluence:register"
+
 [tool.hatch.version]
 path = "src/cfs/__init__.py"
 
@@ -127,6 +134,13 @@ module = [
     "s3fs.*",
     "cfgrib.*",
 ]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# SYMFLUENCE is an optional host framework (entry-point plugin target), never
+# a dependency — it is absent in CI, and the integration module imports it
+# defensively.
+module = ["symfluence.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
