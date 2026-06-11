@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "CFS: Community Forcing Service"
+abstract: >-
+  CFS provides a single asynchronous interface to 33 meteorological forcing
+  products for hydrological and land-surface modelling, acquiring, subsetting,
+  and harmonizing each to a canonical CF-aligned xarray dataset.
+authors:
+  - family-names: Eythorsson
+    given-names: Darri
+    email: dae5@hi.is
+    orcid: "https://orcid.org/0000-0003-3653-3936"
+    affiliation: "University of Calgary"
+repository-code: "https://github.com/DarriEy/CFS"
+license: MIT
+version: 0.1.0
+date-released: "2026-06-11"
+keywords:
+  - hydrology
+  - meteorological forcing
+  - reanalysis
+  - xarray
+  - climate data
