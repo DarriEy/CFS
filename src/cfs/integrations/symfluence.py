@@ -292,3 +292,18 @@ def register() -> None:
 
     R.acquisition_handlers.add("CFS", CFSForcingAcquirer)
     R.dataset_handlers.add("cfs", CFSDatasetHandler)
+
+
+# Self-register when SYMFLUENCE is importable. This complements the entry
+# point: if THIS module is imported before symfluence, the defensive import
+# above triggers symfluence's bootstrap mid-module, and its plugin discovery
+# then sees a partially-initialized module (no ``register`` yet) and skips the
+# cfs entry point. Registering here, at the end of the module body, makes the
+# handlers available regardless of import order; register() is idempotent so
+# the entry-point path stays harmless.
+if HAVE_SYMFLUENCE:  # pragma: no cover - exercised only with SYMFLUENCE present
+    import contextlib
+
+    # Never let registration break ``import cfs.integrations.symfluence``.
+    with contextlib.suppress(Exception):
+        register()
