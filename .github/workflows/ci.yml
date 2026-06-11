@@ -31,5 +31,8 @@ jobs:
       - name: Lint
         run: ruff check src/ tests/
 
+      - name: Type check
+        run: mypy src/cfs
+
       - name: Test (offline only — network tests need credentials/access)
-        run: pytest tests/ -v --tb=short -m "not network"
+        run: pytest tests/ -v --tb=short -m "not network" --cov=cfs --cov-report=term

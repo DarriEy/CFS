@@ -25,6 +25,8 @@ so this connector is live-verifiable.
 from __future__ import annotations
 
 import time
+from functools import partial
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -46,6 +48,10 @@ from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.canonical import VariableMapping, harmonize
 from cfs.subset.grid2d import bbox_index_window
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -77,7 +83,7 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
 
     def __init__(self, config: dict | None = None) -> None:
         super().__init__(config)
-        self._grid_cache = None
+        self._grid_cache: tuple[Any, Any] | None = None
 
     async def list_products(self) -> list[ForcingProduct]:
         return [
@@ -137,7 +143,7 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import pandas as pd
         import xarray as xr
 
@@ -202,7 +208,7 @@ class HRRRConnector(ZarrStoreMixin, BaseForcingConnector):
             ds = ds.expand_dims(time=[pd.Timestamp(ts)])
             return ds.load()
 
-        pieces = await self._gather_pieces([lambda ts=ts: _piece(ts) for ts in hours])
+        pieces = await self._gather_pieces([partial(_piece, ts) for ts in hours])
 
         if not pieces:
             raise SubsetError(f"No HRRR data in [{time_range.start}, {time_range.end}] for the bbox")

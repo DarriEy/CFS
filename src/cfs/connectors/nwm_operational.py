@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta
+from functools import partial
+from typing import TYPE_CHECKING
 
 import numpy as np
 import structlog
@@ -42,6 +44,10 @@ from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.canonical import VariableMapping, harmonize
 from cfs.subset.grid2d import subset_2d_grid
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -139,7 +145,7 @@ class NWMOperationalConnector(BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import xarray as xr
 
         t0 = time.monotonic()
@@ -198,7 +204,7 @@ class NWMOperationalConnector(BaseForcingConnector):
                 logger.debug("nwm_operational step skip", path=path, error=str(e))
                 return None
 
-        pieces = await self._gather_pieces([lambda ts=ts: _piece(ts) for ts in steps])
+        pieces = await self._gather_pieces([partial(_piece, ts) for ts in steps])
 
         if not pieces:
             raise SubsetError(

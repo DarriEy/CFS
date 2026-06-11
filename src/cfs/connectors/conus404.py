@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -46,6 +47,10 @@ from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.canonical import VariableMapping, harmonize
 from cfs.subset.grid2d import subset_2d_grid
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -118,7 +123,7 @@ class CONUS404Connector(ZarrStoreMixin, BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         t0 = time.monotonic()
         product = self._require_product(product_id, await self.list_products())
         settings = get_settings()

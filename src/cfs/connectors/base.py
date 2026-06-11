@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 import structlog
@@ -91,7 +91,7 @@ class BaseForcingConnector(ABC):
 
     async def _gather_pieces(
         self,
-        thunks: list[Callable[[], _T | None]],
+        thunks: Sequence[Callable[[], _T | None]],
         *,
         concurrency: int | None = None,
     ) -> list[_T]:

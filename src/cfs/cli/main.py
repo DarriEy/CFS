@@ -13,7 +13,7 @@ structlog.configure(processors=[structlog.dev.ConsoleRenderer()])
 
 
 @click.group()
-@click.version_option(package_name="cfs")
+@click.version_option(package_name="community-forcing-service")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     """CFS — Community Forcing Service."""

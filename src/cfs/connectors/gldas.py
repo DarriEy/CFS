@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from functools import partial
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -52,6 +54,10 @@ from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.bbox import apply_bbox_subset, plan_bbox_subset
 from cfs.subset.canonical import VariableMapping, harmonize
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -135,7 +141,7 @@ class GLDASConnector(EarthdataAuthMixin, BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import pandas as pd
         import xarray as xr
 
@@ -168,7 +174,7 @@ class GLDASConnector(EarthdataAuthMixin, BaseForcingConnector):
             plan = plan_bbox_subset(ds, bbox, lat_name="lat", lon_name="lon")
             return apply_bbox_subset(ds, plan, lat_name="lat", lon_name="lon")
 
-        pieces = await self._gather_pieces([lambda ts=ts: _piece(ts) for ts in stamps])
+        pieces = await self._gather_pieces([partial(_piece, ts) for ts in stamps])
 
         if not pieces:
             raise SubsetError(f"No GLDAS data in [{time_range.start}, {time_range.end}]")

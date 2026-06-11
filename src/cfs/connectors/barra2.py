@@ -34,8 +34,10 @@ import hashlib
 import os
 import time
 import urllib.request
-from datetime import timedelta
+from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -55,6 +57,10 @@ from cfs.core.models import (
 from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.canonical import VariableMapping, harmonize
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -91,7 +97,7 @@ def _months(time_range: TimeRange) -> list[tuple[int, int]]:
     return out
 
 
-def _iso(dt) -> str:
+def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -179,7 +185,7 @@ class BARRA2Connector(BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import xarray as xr
 
         t0 = time.monotonic()
@@ -217,7 +223,7 @@ class BARRA2Connector(BaseForcingConnector):
             target = cache / f"{self.slug}_{var}_{year}{month:02d}_{bbox_key}_{win_key}.nc"
             return (var, self._download(url, target))
 
-        downloads = await self._gather_pieces([lambda it=it: _dl(*it) for it in items])
+        downloads = await self._gather_pieces([partial(_dl, *it) for it in items])
         if not downloads:
             raise SubsetError(f"No BARRA2 data in [{time_range.start}, {time_range.end}]")
 

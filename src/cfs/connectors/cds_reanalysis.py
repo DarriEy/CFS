@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import structlog
@@ -45,6 +46,10 @@ from cfs.core.models import BoundingBox, FetchResult, ForcingProduct, TimeRange
 from cfs.core.vocabulary import CanonicalVar
 from cfs.derive.humidity import specific_humidity_from_rh
 from cfs.subset.canonical import VariableMapping, harmonize
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -220,7 +225,7 @@ class CDSReanalysisConnector(CDSAPIMixin, BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import xarray as xr
 
         t0 = time.monotonic()

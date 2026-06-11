@@ -47,6 +47,8 @@ import os
 import tempfile
 import time
 import urllib.request
+from functools import partial
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -69,6 +71,10 @@ from cfs.core.vocabulary import CanonicalVar
 from cfs.derive.humidity import specific_humidity_from_rh
 from cfs.subset.bbox import apply_bbox_subset, plan_bbox_subset
 from cfs.subset.canonical import VariableMapping, harmonize
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -135,7 +141,8 @@ def _file_url(member: str, cycle, lead: int) -> str:
 def _http_range(url: str, start: int, end: int | str) -> bytes:
     req = urllib.request.Request(url, headers={"Range": f"bytes={start}-{end}"})  # noqa: S310 - https S3
     with urllib.request.urlopen(req, timeout=get_settings().provider_timeout_s) as r:
-        return r.read()
+        data: bytes = r.read()
+    return data
 
 
 def _open_message(raw: bytes, internal: str):
@@ -234,7 +241,7 @@ class GEFSConnector(BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import pandas as pd
         import xarray as xr
 
@@ -290,7 +297,7 @@ class GEFSConnector(BaseForcingConnector):
                     cur = _read_field(url, idx, gv, gl, internal, bbox)
                     if cur is None:
                         continue
-                    if second_half:
+                    if url_prev is not None and idx_prev is not None:
                         prev = _read_field(url_prev, idx_prev, gv, gl, internal, bbox)
                         if prev is None:
                             continue  # cannot de-bucket without the first half
@@ -302,7 +309,7 @@ class GEFSConnector(BaseForcingConnector):
 
         member_cubes = []
         for member in self.members:
-            thunks = [lambda m=member, v=v: _one(m, v) for v in valid_times]
+            thunks = [partial(_one, member, v) for v in valid_times]
             pieces = await self._gather_pieces(thunks, concurrency=1)
             if not pieces:
                 warnings.append(f"GEFS member {member}: no data in window from cycle {cycle:%Y%m%d %Hz}")

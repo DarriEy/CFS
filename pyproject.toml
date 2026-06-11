@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cfs"
-version = "0.1.0"
+name = "community-forcing-service"
+dynamic = ["version"]
 description = "Community Forcing Service — acquire-and-subset access to meteorological forcing for hydrological models"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
-    { name = "CFS Contributors" },
+    { name = "Darri Eythorsson", email = "dae5@hi.is" },
 ]
 keywords = ["hydrology", "forcing", "meteorology", "reanalysis", "era5", "xarray", "zarr"]
 classifiers = [
@@ -58,20 +58,34 @@ forecast = [
     "eccodes>=1.6",
     "pandas>=2.0",
 ]
-api = [
-    "fastapi>=0.111",
-    "uvicorn[standard]>=0.30",
-]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
     "ruff>=0.4",
     "mypy>=1.10",
+    "pandas-stubs>=2.0",
+    "types-PyYAML>=6.0",
+    "types-requests>=2.31",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.25",
+]
+
+[project.urls]
+Homepage = "https://github.com/DarriEy/CFS"
+Documentation = "https://darriey.github.io/CFS/"
+Repository = "https://github.com/DarriEy/CFS"
+Issues = "https://github.com/DarriEy/CFS/issues"
+Changelog = "https://github.com/DarriEy/CFS/blob/main/CHANGELOG.md"
 
 [project.scripts]
 cfs = "cfs.cli.main:cli"
+
+[tool.hatch.version]
+path = "src/cfs/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cfs"]
@@ -102,3 +116,22 @@ python_version = "3.11"
 warn_return_any = true
 disallow_untyped_defs = false
 check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# Untyped third-party libraries (no stubs, no py.typed marker).
+module = [
+    "cdsapi.*",
+    "pydap.*",
+    "fsspec.*",
+    "gcsfs.*",
+    "s3fs.*",
+    "cfgrib.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# zarr ships py.typed but uses PEP 695 type-parameter syntax, which mypy
+# cannot parse under python_version = 3.11 — don't follow imports into it.
+module = "zarr.*"
+follow_imports = "skip"
+ignore_missing_imports = true

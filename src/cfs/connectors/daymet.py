@@ -26,6 +26,8 @@ Auth-gated; the OPeNDAP structure/units were probe-confirmed with credentials.
 from __future__ import annotations
 
 import time
+from functools import partial
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -47,6 +49,10 @@ from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.derive.humidity import dewpoint_from_vapor_pressure
 from cfs.subset.canonical import VariableMapping, harmonize
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -133,7 +139,7 @@ class DaymetConnector(EarthdataAuthMixin, BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import xarray as xr
 
         t0 = time.monotonic()
@@ -171,7 +177,7 @@ class DaymetConnector(EarthdataAuthMixin, BaseForcingConnector):
             merged = xr.merge(per_var, join="inner")
             return merged.load() if merged.sizes.get("time", 0) > 0 else None
 
-        pieces = await self._gather_pieces([lambda y=y: _piece(y) for y in years])
+        pieces = await self._gather_pieces([partial(_piece, y) for y in years])
 
         if not pieces:
             raise SubsetError(f"No Daymet data in [{time_range.start}, {time_range.end}]")

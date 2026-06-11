@@ -14,6 +14,7 @@ are generated dynamically from the LCC projection parameters.
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 import structlog
@@ -36,6 +37,10 @@ from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.canonical import VariableMapping, harmonize
 from cfs.subset.grid2d import subset_2d_grid
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -82,7 +87,7 @@ class AORCNWMConnector(ZarrStoreMixin, BaseForcingConnector):
 
     def __init__(self, config: dict | None = None) -> None:
         super().__init__(config)
-        self._grid_cache = None
+        self._grid_cache: tuple[np.ndarray, np.ndarray] | None = None
 
     async def list_products(self) -> list[ForcingProduct]:
         return [
@@ -125,7 +130,7 @@ class AORCNWMConnector(ZarrStoreMixin, BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import xarray as xr
 
         t0 = time.monotonic()

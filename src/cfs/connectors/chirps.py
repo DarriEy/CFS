@@ -18,6 +18,8 @@ happens — so the old "download the world to clip a basin" cost is gone.
 from __future__ import annotations
 
 import time
+from functools import partial
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -38,6 +40,10 @@ from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.bbox import apply_bbox_subset, plan_bbox_subset
 from cfs.subset.canonical import VariableMapping, harmonize
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -94,7 +100,7 @@ class CHIRPSConnector(HTTPFilesMixin, BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import xarray as xr
 
         t0 = time.monotonic()
@@ -115,7 +121,7 @@ class CHIRPSConnector(HTTPFilesMixin, BaseForcingConnector):
             # Materialize only the (small) overlapping chunks pulled over byte-range.
             return ds_sp.load() if ds_sp.sizes.get("time", 0) > 0 else None
 
-        pieces = await self._gather_pieces([lambda y=y: _piece(y) for y in years])
+        pieces = await self._gather_pieces([partial(_piece, y) for y in years])
 
         if not pieces:
             raise SubsetError(

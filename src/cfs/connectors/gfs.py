@@ -37,6 +37,8 @@ import tempfile
 import time
 import urllib.request
 from datetime import datetime
+from functools import partial
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -57,6 +59,10 @@ from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.bbox import apply_bbox_subset, plan_bbox_subset
 from cfs.subset.canonical import VariableMapping, harmonize
+
+if TYPE_CHECKING:
+    import xarray as xr
+
 
 logger = structlog.get_logger()
 
@@ -172,7 +178,8 @@ class GFSConnector(BaseForcingConnector):
         rng = f"bytes={start}-{end}"
         req = urllib.request.Request(url, headers={"Range": rng})  # noqa: S310 - https S3
         with urllib.request.urlopen(req, timeout=get_settings().provider_timeout_s) as r:
-            return r.read()
+            data: bytes = r.read()
+        return data
 
     def _open_message(self, raw: bytes, internal: str):
         """Decode one GRIB message (bytes) with cfgrib → a single-variable Dataset."""
@@ -200,7 +207,7 @@ class GFSConnector(BaseForcingConnector):
         bbox: BoundingBox,
         time_range: TimeRange,
         variables: list[CanonicalVar] | None = None,
-    ) -> tuple[object, FetchResult]:
+    ) -> tuple[xr.Dataset, FetchResult]:
         import pandas as pd
         import xarray as xr
 
@@ -248,7 +255,7 @@ class GFSConnector(BaseForcingConnector):
             return merged.expand_dims(time=[pd.Timestamp(valid)])
 
         pieces = await self._gather_pieces(
-            [lambda v=v: _piece(v) for v in valid_times], concurrency=1
+            [partial(_piece, v) for v in valid_times], concurrency=1
         )
         if not pieces:
             raise SubsetError(
