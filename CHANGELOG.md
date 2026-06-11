@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`MSWEP_V315/Past/Hourly/2020116.18.nc`) and offline-tested; still
   `verified: false` pending a live authenticated rclone run. Caveat: GloH2O
   flags a 2000–2015 low-precipitation artifact in V3.15/V3.16.
+- **NEX-GDDP-CMIP6 file-version selection made explicit**: the per-year file
+  resolver relied on `"_v" in name` with last-match-wins over the S3 listing
+  order, which only preferred `_v2.0` because it happens to sort after
+  `_v1.1`. It now parses the `_vN[.N…]` suffix into a numeric version tuple
+  (unsuffixed = version 0) and picks the highest, so `_v10.0` beats `_v2.0`
+  regardless of listing order.
 
 ## [0.2.0] — 2026-06-11
 

@@ -578,7 +578,7 @@
     - wind_speed                            # sfcWind
     - surface_downwelling_shortwave_flux    # rsds
     - surface_downwelling_longwave_flux     # rlds
-  note: "FIRST PROJECTION connector. scenario=product-id, model/member=config; recorded in provenance + ds.attrs (cmip6_model/scenario/member). Dir-listing resolves grid-label (gn/gr/gr1) + _v2.0 correction per year. LIVE-VERIFIED (hist 2010 T283 vs ssp585 2090 T290 — warming signal)."
+  note: "FIRST PROJECTION connector. scenario=product-id, model/member=config; recorded in provenance + ds.attrs (cmip6_model/scenario/member). Dir-listing resolves grid-label (gn/gr/gr1) + the highest numeric _vN correction per year (explicit version-tuple compare, not listing order). LIVE-VERIFIED (hist 2010 T283 vs ssp585 2090 T290 — warming signal)."
   status: implemented
   verified: true
 

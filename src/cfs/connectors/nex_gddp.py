@@ -17,10 +17,11 @@ mass flux). The chosen model/scenario/member are recorded in
 ``FetchResult.provenance`` and on the returned dataset's attrs.
 
 File names vary by per-model grid label (``gn``/``gr``/``gr1``) and carry an
-optional ``_v2.0`` correction suffix, so the connector *lists* each variable
-directory and resolves the file per year (preferring ``_v2.0``) rather than
-hardcoding a name. Layout/units/coords were probe-confirmed. Anonymous →
-live-verifiable.
+optional ``_vN[.N]`` correction suffix (``_v1.1``, ``_v2.0``, …), so the
+connector *lists* each variable directory and resolves the file per year,
+parsing the suffix into a numeric version tuple and picking the highest
+(unsuffixed = version 0) rather than hardcoding a name. Layout/units/coords
+were probe-confirmed. Anonymous → live-verifiable.
 """
 
 from __future__ import annotations
@@ -78,6 +79,20 @@ _MAPPINGS: list[VariableMapping] = [
     VariableMapping("rlds", CanonicalVar.LONGWAVE_RADIATION_DOWN),   # W/m2
 ]
 _YEAR_RE = re.compile(r"_(\d{4})(?:_v[\d.]+)?\.nc$")
+_VERSION_RE = re.compile(r"_v(\d+(?:\.\d+)*)\.nc$")
+
+
+def _file_version(name: str) -> tuple[int, ...]:
+    """Numeric version tuple of a ``_vN[.N…]`` correction suffix (none → ``(0,)``).
+
+    Explicit numeric comparison — NOT listing order or string compare — so
+    ``_v10.0`` beats ``_v2.0`` and any unsuffixed original loses to every
+    suffixed correction.
+    """
+    m = _VERSION_RE.search(name)
+    if not m:
+        return (0,)
+    return tuple(int(part) for part in m.group(1).split("."))
 
 
 @register("nex_gddp")
@@ -136,10 +151,11 @@ class NEXGDDPConnector(BaseForcingConnector):
         return products
 
     def _resolve_year_files(self, var: str, scenario: str) -> dict[int, str]:
-        """Map year → S3 path for ``var``, preferring the ``_v2.0`` correction."""
+        """Map year → S3 path for ``var``, preferring the highest ``_vN`` correction."""
         fs = self._filesystem()
         prefix = f"{BUCKET}/{self.model}/{scenario}/{self.member}/{var}"
         out: dict[int, str] = {}
+        best: dict[int, tuple[int, ...]] = {}
         try:
             listing = fs.ls(prefix)
         except FileNotFoundError:
@@ -150,9 +166,10 @@ class NEXGDDPConnector(BaseForcingConnector):
             if not m:
                 continue
             year = int(m.group(1))
-            is_v2 = "_v" in name
-            if year not in out or is_v2:
+            version = _file_version(name)
+            if year not in out or version > best[year]:
                 out[year] = path
+                best[year] = version
         return out
 
     async def fetch(
