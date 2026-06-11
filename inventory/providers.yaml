@@ -5,6 +5,11 @@
 # precip + down shortwave/longwave radiation, and specific humidity derived from RH.
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
+# verified: true = live-verified against the upstream store (auth-gated ones with
+# real credentials); false = offline-verified only (logic tested, live access pending).
+# caveats: machine-readable per-provider warnings (rolling archive windows,
+# unverified units, slow per-file access paths).
+#
 # Canonical schema: cfs.core.vocabulary (canonical-v1)
 # Connectors return a bbox+time subset as a canonical xarray.Dataset and STOP.
 # HRU remapping and model-specific forcing schemas are the consumer's job.
@@ -31,6 +36,7 @@
     - surface_downwelling_shortwave_flux
     - surface_downwelling_longwave_flux
   status: implemented
+  verified: true
 
 - slug: aorc
   name: NOAA AORC v1.1 (1 km, hourly)
@@ -54,6 +60,7 @@
     - surface_downwelling_shortwave_flux
     - surface_downwelling_longwave_flux
   status: implemented
+  verified: true
 
 - slug: aorc_nwm
   name: NOAA AORC v1.1 NWM-Projected (1 km, hourly)
@@ -78,6 +85,7 @@
     - surface_downwelling_longwave_flux
   note: "AORC v1.1 projected to the NWM v3.0 1km LCC grid. Lat/lon generated dynamically from LCC params. LIVE-VERIFIED."
   status: implemented
+  verified: true
 
 - slug: chirps
   name: CHIRPS v2.0 daily precipitation (0.05°)
@@ -95,6 +103,7 @@
     - precipitation_flux
   note: "yearly 1.1 GB global HDF5 files opened lazily over HTTP byte-range (chunked ~20x112x400); only bbox+time chunks transfer — no whole-file download. LIVE-VERIFIED (India monsoon subset in ~4s)."
   status: implemented
+  verified: true
 
 - slug: era5_land
   name: ECMWF ERA5-Land (0.1°, hourly, via CDS)
@@ -119,6 +128,7 @@
     - surface_downwelling_longwave_flux     # de-accumulated
   note: "CDS area param does the spatial subset; tp/ssrd/strd de-accumulated. LIVE-VERIFIED (1h chunk-pad fixes the 00:00 daily-total de-accum edge case; SW 664 W/m2, QC clean)."
   status: implemented
+  verified: true
 
 - slug: era5_cds
   name: ECMWF ERA5 (0.25°, hourly, via CDS)
@@ -143,6 +153,7 @@
     - surface_downwelling_longwave_flux
   note: "Direct CDS API access for standard ERA5 single-levels. LIVE-VERIFIED."
   status: implemented
+  verified: true
 
 - slug: wfde5
   name: WFDE5 bias-corrected ERA5 forcing (0.5°, hourly, via CDS)
@@ -166,6 +177,7 @@
     - precipitation_flux                    # Rainf + Snowf
   note: "CDS monthly full-grid NetCDF files (no area subset); cached then subset locally. Rainf and Snowf are summed into canonical precipitation_flux. Request needs product=wfde5 and version=2_1 (underscore), confirmed vs the live form. LIVE-VERIFIED (Alberta Jan 2019; T 252-274 K)."
   status: implemented
+  verified: true
 
 - slug: carra
   name: CARRA — Copernicus Arctic Regional Reanalysis (2.5 km, via CDS)
@@ -191,6 +203,7 @@
     - surface_downwelling_longwave_flux     # forecast stream -> /3600
   note: "Dual analysis+forecast streams merged; RH->q derived. LIVE-VERIFIED (Greenland west_domain; T 276K, q 0.0024 derived, QC clean). CDS request limited to requested day-range (not whole month)."
   status: implemented
+  verified: true
 
 - slug: cerra
   name: CERRA — Copernicus European Regional Reanalysis (5.5 km, via CDS)
@@ -214,6 +227,7 @@
     - surface_downwelling_longwave_flux
   note: "Like CARRA but data_type=reanalysis, no domain, wind_speed (si10) not u/v. LIVE-VERIFIED (Alps; T 283K, wind 1.5, q 0.0069 derived, QC clean)."
   status: implemented
+  verified: true
 
 - slug: merra2
   name: NASA MERRA-2 (0.5°×0.625°, hourly, via OPeNDAP)
@@ -238,6 +252,7 @@
     - precipitation_flux                    # PRECTOTCORR, already kg m-2 s-1
   note: "Merges SLV+RAD+FLX collections (daily OPeNDAP files). All native SI (identity). LIVE-VERIFIED."
   status: implemented
+  verified: true
 
 - slug: nldas
   name: NLDAS-2 (0.125°, hourly, via OPeNDAP)
@@ -262,6 +277,9 @@
     - precipitation_flux                    # Rainf hourly accum (kg m-2) -> /3600
   note: "ONE OPeNDAP file PER HOUR — slow for long ranges (warned). Vars are CF names Tair/Qair/PSurf/Wind_E/Wind_N/LWdown/SWdown/Rainf (probe-corrected from GRIB names). LIVE-VERIFIED."
   status: implemented
+  verified: true
+  caveats:
+    - "opens one OPeNDAP endpoint per hour — fine for short windows, slow for long ranges (warned in the FetchResult)"
 
 - slug: gpm
   name: GPM IMERG Daily precipitation (0.1°, via OPeNDAP)
@@ -279,6 +297,7 @@
     - precipitation_flux
   note: "Final (DF), Early (DE), and Late (DL) daily runs. Handles variable precip names and orientation. LIVE-VERIFIED (Final)."
   status: implemented
+  verified: true
 
 - slug: cmorph
   name: NOAA CPC CMORPH CDR daily precipitation (0.25°)
@@ -296,6 +315,9 @@
     - precipitation_flux                    # cmorph mm/day -> /86400
   note: "Discovers monthly daily tar names from the CPC index, downloads/cache the covering tar, extracts requested day NetCDF members, subsets locally. OFFLINE-VERIFIED with live index/member probes."
   status: implemented
+  verified: true
+  caveats:
+    - "NOAA CPC daily-tar endpoint hosts only a rolling recent window (roughly the last couple of months); fetches outside it raise a clear 'no tar listed' error"
 
 - slug: gldas
   name: NASA GLDAS-2 Noah (0.25°, 3-hourly, global land)
@@ -319,6 +341,9 @@
     - precipitation_flux
   note: "Two products: gldas:noah025_3h (GLDAS-2.1, 2000->present) and gldas:noah025_3h_v20 (GLDAS-2.0, 1948-2014). One Earthdata OPeNDAP endpoint per 3-hour stamp (8/day), so long ranges are slow and warned. LIVE-VERIFIED against GES DISC."
   status: implemented
+  verified: true
+  caveats:
+    - "opens one OPeNDAP endpoint per 3-hour stamp (8/day), so long ranges are slow (warned in the FetchResult)"
 
 - slug: daymet
   name: Daymet V4R1 (1 km daily, North America, via OPeNDAP)
@@ -339,6 +364,7 @@
     - surface_downwelling_shortwave_flux
   note: "Daymet daily 1 km LCC; T=mean(tmax,tmin), Td from vapour pressure, SW=srad*dayl. (Pressure/humidity-from-elevation was attempted but reverted: Daymet has no elevation granule.)"
   status: implemented
+  verified: true
 
 - slug: rdrs
   name: RDRS / CaSR v3.2 (Canadian Surface Reanalysis, ~10 km, hourly)
@@ -364,6 +390,7 @@
     - precipitation_flux                    # pr (already kg m-2 s-1)
   note: "Var names probe-confirmed. LIVE-VERIFIED (anonymous OPeNDAP NCML; open is slow ~2min)."
   status: implemented
+  verified: true
 
 - slug: conus404
   name: CONUS404 (4 km WRF reanalysis, hourly)
@@ -389,6 +416,7 @@
     - precipitation_flux                    # PREC_ACC_NC (1-h bucket mm -> linear /3600)
   note: "Var names probe-confirmed. Radiation de-accumulated with 1-h pad; precip is per-bucket (linear). LIVE-VERIFIED (anonymous OSN Zarr)."
   status: implemented
+  verified: true
 
 - slug: hrrr
   name: NOAA HRRR (3 km, hourly)
@@ -414,6 +442,7 @@
     - precipitation_flux                    # fcst stream only
   note: "Added surface forecast product with precipitation support. LIVE-VERIFIED."
   status: implemented
+  verified: true
 
 - slug: gridmet
   name: gridMET daily CONUS surface meteorology (~4 km)
@@ -435,6 +464,7 @@
     - precipitation_flux
   note: "Uses NKN THREDDS aggregated variable datasets (agg_met_*_1979_CurrentYear_CONUS.nc). Air temperature is derived from daily max/min; precip amount mm/day -> flux. OFFLINE-VERIFIED with live DDS probes."
   status: implemented
+  verified: true
 
 - slug: nclimgrid_daily
   name: NOAA nClimGrid-Daily (5 km, CONUS)
@@ -453,6 +483,7 @@
     - precipitation_flux                    # prcp mm/day -> /86400
   note: "Monthly NCEI THREDDS OPeNDAP files ncdd-YYYYMM-grd-scaled.nc; bbox+time subset by regular lat/lon. OFFLINE-VERIFIED with live DDS probe."
   status: implemented
+  verified: true
 
 - slug: narr
   name: NOAA NARR daily monolevel fields (32 km)
@@ -477,6 +508,9 @@
     - surface_downwelling_longwave_flux     # Added
   note: "Added dswrf/dlwrf radiation fields. NOAA PSL daily monolevel OPeNDAP files. LIVE-VERIFIED (Nebraska Jun 2020: SW 358-379, LW 353-366 W m-2)."
   status: implemented
+  verified: true
+  caveats:
+    - "occasional tiny-negative precipitation from the source fields (advisory range-QC warning)"
 
 - slug: barra2
   name: BoM BARRA-R2 (Australian Regional Reanalysis v2, ~12 km, hourly)
@@ -501,6 +535,7 @@
     - precipitation_flux
   note: "Anonymous NCI THREDDS NetcdfSubset service does bbox+time server-side; one request per variable per month. Hourly means at HH:30 are floored to the hour to share the instantaneous axis. LIVE-VERIFIED against NCI store."
   status: implemented
+  verified: true
 
 - slug: eobs
   name: E-OBS European gridded observations (0.1°/0.25° daily, via CDS)
@@ -521,6 +556,7 @@
     - wind_speed
   note: "Exposes only cleanly-convertible fields (tg/rr/qq/fg); pp (sea-level pressure) and hu (relative humidity) deliberately deferred. LIVE-VERIFIED (NL bbox 2020: T 280-295 K, precip <=2.2e-4)."
   status: implemented
+  verified: true
 
 - slug: nex_gddp
   name: NASA NEX-GDDP-CMIP6 (0.25° daily downscaled CMIP6 projections)
@@ -544,6 +580,8 @@
     - surface_downwelling_longwave_flux     # rlds
   note: "FIRST PROJECTION connector. scenario=product-id, model/member=config; recorded in provenance + ds.attrs (cmip6_model/scenario/member). Dir-listing resolves grid-label (gn/gr/gr1) + _v2.0 correction per year. LIVE-VERIFIED (hist 2010 T283 vs ssp585 2090 T290 — warming signal)."
   status: implemented
+  verified: true
+
 - slug: mswep
   name: MSWEP (Multi-Source Weighted-Ensemble Precipitation, 0.1°)
   protocol: rclone            # Google Drive shared folder via rclone CLI
@@ -561,6 +599,9 @@
     - precipitation_flux       # daily mm/day ->/86400 ; 3hourly mm/3hr ->/10800
   note: "OUT-OF-BAND access: rclone cat --drive-shared-with-me streams per-step NetCDFs. OFFLINE-VERIFIED only (no rclone/access here); clear RegistrationRequiredError if rclone missing. Monthly resolution deferred (variable-length month = non-constant flux scale). New protocol mixin cfs.connectors.protocols.rclone."
   status: implemented
+  verified: false
+  caveats:
+    - "distributed only via a GloH2O-shared Google Drive folder; needs the external rclone CLI plus a configured Drive remote with granted access"
 
 - slug: em_earth
   name: EM-Earth (0.1° daily, global; AWS S3, credential-gated)
@@ -581,6 +622,10 @@
     - precipitation_flux    # prcp ASSUMED mm/day /86400 -- UNVERIFIED (always warns)
   note: "BLOCKED for anon access (emearth bucket denies anon GET; needs AWS creds via config={'anon':False}). SYMFLUENCE's handler silently 403->'no data'. Precip units UNVERIFIED (can't read a file; QC can't catch a precip unit error) -> explicit FetchResult warning every fetch. Temperature QC-protected. Built credential-capable + clear RegistrationRequiredError on 403. NOT live-verifiable here."
   status: implemented_blocked_access
+  verified: false
+  caveats:
+    - "daily prcp units unverified (assumed mm/day); every precipitation fetch carries an explicit warning"
+    - "S3 bucket denies anonymous reads (listing only) — needs AWS credentials (config={'anon': False})"
 
 - slug: na_cordex
   name: NA-CORDEX (0.22°/0.44° daily, North America, via S3)
@@ -602,6 +647,7 @@
     - northward_wind
   note: "Experiments eval/hist-rcp45/hist-rcp85 (grid + bias-correction via config); returns the CORDEX multi-model ensemble (member_id dim). hurs (RH) not offered - no surface pressure to derive q. LIVE-VERIFIED (US hist-rcp45 2000: T 284-301 K)."
   status: implemented
+  verified: true
 
 - slug: nwm_operational
   name: NWM Operational Forcing (1 km, hourly, via S3)
@@ -626,6 +672,9 @@
     - precipitation_flux
   note: "Only analysis_assim exposed (tm00 file = forcing at valid time); short/medium-range forecasts out of scope. lat/lon generated from the 1km LCC projection (LDASIN has only x/y). Rolling ~4-week archive. LIVE-VERIFIED (CONUS 2026-05-28: T 293-301 K, precip <=6.6 mm/h)."
   status: implemented
+  verified: true
+  caveats:
+    - "bucket keeps only a rolling ~4-week window; fetches must target recent dates"
 
 - slug: chirts
   name: CHIRTS daily temperature (0.05°, global tropics, via HTTP)
@@ -643,6 +692,7 @@
     - air_temperature       # mean(Tmax,Tmin) C +273.15
   note: "Temperature companion to CHIRPS. Per-year, per-variable chunked NetCDFs (Tmax/Tmin, degC) opened lazily over HTTP byte-range. v1.0 covers 1983-2016. LIVE-VERIFIED (East Africa 2016: 278-304 K)."
   status: implemented
+  verified: true
 
 - slug: persiann_cdr
   name: PERSIANN-CDR daily satellite precipitation (0.25°, via HTTP)
@@ -660,6 +710,7 @@
     - precipitation_flux    # precipitation mm/day /86400
   note: "Global daily satellite precip CDR, 1983-present (multi-week latency). Per-day files carry an unpredictable creation-date suffix, so filenames are resolved from each year's HTML directory index. var 'precipitation' (mm), dims (time,lon,lat) re-oriented. LIVE-VERIFIED (Indonesia 2016: <=45 mm/day)."
   status: implemented
+  verified: true
 
 - slug: fldas
   name: NASA FLDAS Noah (0.1° monthly, global/Africa land, via OPeNDAP)
@@ -683,6 +734,7 @@
     - precipitation_flux    # Rainf_f_tavg (already a flux, identity)
   note: "FEWS NET LDAS, FLDAS_NOAH01_C_GL_M.001. Reuses the GLDAS Earthdata/DAP4 mixin; all identity SI. MONTHLY only (no daily on this Hyrax) - climatology/seasonal, too coarse for event-scale. Land-only (ocean fill). LIVE-VERIFIED (East Africa 2020-01: T 277-300 K)."
   status: implemented
+  verified: true
 
 - slug: gfs
   name: NOAA GFS atmospheric forecast (0.25°, hourly, global, via S3 GRIB2)
@@ -707,6 +759,7 @@
     - surface_downwelling_longwave_flux     # DLWRF surface (fcst-avg, absent at f000)
   note: "FIRST FORECAST connector. Herbie-style: reads the .idx byte index and HTTP byte-range fetches only the surface GRIB messages (~MB not ~1.5GB), decodes with cfgrib (forecast extra). Cycle = most recent 00/06/12/18Z <= start; valid time -> lead hour (1h to f120, 3h to f384). All identity SI. LIVE-VERIFIED (US: T 292-300 K, SW 80-228 W/m2, sp 92-94 kPa)."
   status: implemented
+  verified: true
 
 - slug: gefs
   name: NOAA GEFS ensemble forecast (0.25 select, 3-hourly, global, via S3 GRIB2)
@@ -732,6 +785,7 @@
     - specific_humidity     # derived from 2 m RH + T + surface pressure (Bolton 1980)
   note: "Ensemble companion to gfs (same .idx/byte-range/cfgrib machinery), pgrb2sp25 select product (3-hourly to f240), returns a member dim. Instantaneous fields identity SI; precip (APCP, accumulation) + radiation (DSWRF/DLWRF, average) ship as 6-hour buckets (0-3,0-6,6-9,...) DE-BUCKETED by lead hour (cur-prev for acc, 2*cur-prev for ave) -> APCP to flux, radiation W m-2; value-sign reset detection unsafe here. specific_humidity DERIVED from 2 m RH + T + surface pressure (RH fetched as input only, never exposed raw). LIVE-VERIFIED (precip non-negative 0-9 mm/hr, SW ~0 overnight after de-averaging, derived q 9-17 g/kg, member spread)."
   status: implemented
+  verified: true
 
 # ── Migration backlog (handlers to port from SYMFLUENCE) ───────────────
 # Each becomes a connector following the same acquire-and-subset contract.
