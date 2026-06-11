@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-06-11
+
+### Added
+
+- **SYMFLUENCE integration via entry-point plugin**
+  (`cfs.integrations.symfluence`): installing CFS next to SYMFLUENCE makes
+  every CFS product available as a SYMFLUENCE forcing dataset
+  (`FORCING_DATASET: CFS` + `CFS_PRODUCT: <provider:product>`), with no
+  manual registration — SYMFLUENCE discovers the `symfluence.plugins` entry
+  point on import. Ships `CFSForcingAcquirer` (acquisition handler wrapping
+  `cfs.fetch_sync`, registered as `'CFS'`) and `CFSDatasetHandler` (CFIF
+  preprocessing handler, registered as `'cfs'`; canonical-v1 names map to
+  CFIF by identity). Regular latitude/longitude grids only in v1;
+  projected-grid products raise `NotImplementedError`. SYMFLUENCE base
+  classes are imported defensively, so `import cfs` never requires (or
+  fails without) SYMFLUENCE, and SYMFLUENCE is **not** a dependency.
+  Documented in `docs/symfluence.md`.
+
 ## [0.2.0] — 2026-06-11
 
 ### Added
