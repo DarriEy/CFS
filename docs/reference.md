@@ -2,6 +2,14 @@
 
 Reference for the public `cfs` API, generated from the source.
 
+## Facade (one-shot API)
+
+::: cfs.api.fetch
+
+::: cfs.api.fetch_sync
+
+::: cfs.api.configure
+
 ## Registry
 
 ::: cfs.core.registry.discover

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-06-11
+
+### Added
+
+- **Public API facade**: the blessed import surface is now re-exported from
+  the top-level package with an explicit `cfs.__all__` — `discover`,
+  `get_connector`, `list_providers`, `BoundingBox`, `TimeRange`,
+  `CanonicalVar`, `FetchResult`, plus the new facade functions below.
+  Connector modules remain lazy (imported only by `discover()`).
+- **One-shot fetch**: `cfs.fetch(product_or_slug, bbox, time_range,
+  variables=None, config=None)` runs discovery, connector resolution, and the
+  async connector lifecycle in a single call. Accepts a full product ID
+  (`"era5_arco:single_levels"`, the same identifier the CLI takes) or a bare
+  provider slug when the provider offers exactly one product;
+  bbox/time_range/variables accept plain tuples and strings as well as the
+  typed models.
+- **Sync wrapper**: `cfs.fetch_sync(...)` wraps `cfs.fetch` via
+  `asyncio.run`, with a clear error when called from a running event loop.
+- **`cfs.configure(**overrides)`**: programmatic runtime-settings hook for
+  embedders — validates keywords against `Settings` fields, writes the
+  corresponding `CFS_*` environment variables, and clears the
+  `get_settings()` cache so overrides (cache dir, timeouts, guardrails)
+  take effect after import.
+
 ## [0.1.0] — 2026-06-11
 
 Initial release.

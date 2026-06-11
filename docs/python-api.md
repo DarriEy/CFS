@@ -1,9 +1,81 @@
 # Python API
 
-CFS is used in-process: discover the connector registry, instantiate a
-connector, and `await` a fetch inside an async context. There is no server.
+CFS is used in-process — there is no server. Everything you need is exported
+from the top-level `cfs` package (see `cfs.__all__`).
 
-## The discover / get_connector / fetch pattern
+## One-shot fetch (start here)
+
+`cfs.fetch_sync()` runs the whole pipeline — registry discovery, connector
+resolution, acquire + subset + harmonize — in a single call:
+
+```python
+import cfs
+
+ds, result = cfs.fetch_sync(
+    "era5_arco:single_levels",                       # product ID: {provider}:{product}
+    bbox=(-114.5, 50.7, -114.0, 51.1),               # min_lon, min_lat, max_lon, max_lat
+    time_range=("2015-06-01T00:00", "2015-06-01T06:00"),
+    variables=["air_temperature", "precipitation_flux"],  # None = all the product offers
+)
+```
+
+From async code, `await` the underlying coroutine directly (`fetch_sync`
+raises a clear error if called inside a running event loop):
+
+```python
+ds, result = await cfs.fetch(
+    "era5_arco:single_levels",
+    bbox=(-114.5, 50.7, -114.0, 51.1),
+    time_range=("2015-06-01T00:00", "2015-06-01T06:00"),
+)
+```
+
+Both accept:
+
+- **Identifier** — a full product ID (`"era5_arco:single_levels"`, the same
+  string `cfs fetch -P` takes; the provider slug is the part before the first
+  `:`), or a **bare provider slug** (`"aorc"`), which resolves automatically
+  when that provider offers exactly one product (otherwise a `ValueError`
+  lists the candidate product IDs).
+- **bbox / time_range** — typed models (`cfs.BoundingBox`, `cfs.TimeRange`)
+  or plain tuples (floats; `datetime`s or ISO-8601 strings).
+- **variables** — `cfs.CanonicalVar` members or their string values.
+- **config** — an optional provider-specific connector config dict (see
+  [below](#connector-configuration-config-dict-injection)), e.g.
+  `cfs.fetch_sync("gefs:ensemble_0p25", ..., config={"members": ["gec00"]})`.
+
+The returned dataset follows the [canonical-v1](canonical-v1.md) contract and
+is **lazy** (dask-backed) where the protocol allows; `result` is the
+[FetchResult](#fetchresult) provenance/shape metadata.
+
+## Runtime configuration: `cfs.configure()`
+
+CFS settings are env-driven (`CFS_*` variables — timeouts, fetch guardrails,
+cache directory, concurrency) and cached on first read. Embedders that can't
+set environment variables before import can override them programmatically:
+
+```python
+import cfs
+
+cfs.configure(
+    cache_dir="/scratch/cfs-cache",   # where whole-file HTTP sources cache downloads
+    provider_timeout_s=300,
+    max_area_deg2=900,
+)
+```
+
+Each keyword must be a `Settings` field (`cfs.core.config.Settings`); the
+value is written to the corresponding `CFS_<FIELD>` environment variable and
+the settings cache is cleared, so the override takes effect everywhere
+(connectors read settings at call time, never at import time). Pass `None` to
+drop an override and fall back to the environment/default. The new effective
+`Settings` is returned.
+
+## Advanced: the discover / get_connector / fetch pattern
+
+The facade wraps a small lower-level seam, which remains fully public — use it
+to hold a connector open across multiple fetches, list products
+programmatically, or control the lifecycle yourself.
 
 ```python
 from datetime import datetime
@@ -112,8 +184,9 @@ the request), `HarmonizationError` (no requested variable available), and
 
 ## Running it synchronously
 
-CFS's API is async (`fetch` awaits concurrent per-file opens). From
-synchronous code, wrap the call:
+CFS's API is async (`fetch` awaits concurrent per-file opens). For the common
+case, `cfs.fetch_sync(...)` does the wrapping for you. When using the
+lower-level connector pattern from synchronous code, wrap the call yourself:
 
 ```python
 import asyncio

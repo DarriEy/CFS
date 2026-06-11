@@ -84,21 +84,23 @@ cfs fetch \
 Python:
 
 ```python
-from cfs.core.models import BoundingBox, TimeRange
-from cfs.core.registry import discover, get_connector
-from cfs.core.vocabulary import CanonicalVar
+import cfs
 
-discover()
-Conn = get_connector("era5_arco")
-async with Conn() as conn:
-    ds, result = await conn.fetch(
-        "era5_arco:single_levels",
-        BoundingBox(min_lon=-114.5, min_lat=50.7, max_lon=-114.0, max_lat=51.1),
-        TimeRange(start=..., end=...),
-        variables=[CanonicalVar.AIR_TEMPERATURE, CanonicalVar.PRECIPITATION_FLUX],
-    )
+ds, result = cfs.fetch_sync(
+    "era5_arco:single_levels",
+    bbox=(-114.5, 50.7, -114.0, 51.1),
+    time_range=("2015-06-01T00:00", "2015-06-01T06:00"),
+    variables=["air_temperature", "precipitation_flux"],
+)
 # ds: lazy canonical cube;  result: FetchResult provenance/shape metadata
 ```
+
+From async code, `await cfs.fetch(...)` directly. Runtime settings (cache
+dir, timeouts, guardrails) can be overridden after import with
+`cfs.configure(...)`. The lower-level
+`discover()` / `get_connector(slug)` / async-context-manager seam stays
+public — see the
+[Python API guide](https://darriey.github.io/CFS/python-api/).
 
 ## Adding a connector
 
