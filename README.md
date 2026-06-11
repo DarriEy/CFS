@@ -102,6 +102,16 @@ dir, timeouts, guardrails) can be overridden after import with
 public — see the
 [Python API guide](https://darriey.github.io/CFS/python-api/).
 
+## Using CFS inside SYMFLUENCE
+
+CFS ships a SYMFLUENCE plugin (`cfs.integrations.symfluence`, auto-discovered
+via the `symfluence.plugins` entry point): install both packages, set
+`FORCING_DATASET: CFS` and `CFS_PRODUCT: <provider:product>` in a SYMFLUENCE
+config, and every CFS product becomes a SYMFLUENCE forcing dataset — CFS
+acquires the canonical cube, SYMFLUENCE renames it to CFIF and does the HRU
+remapping. See the
+[SYMFLUENCE integration guide](https://darriey.github.io/CFS/symfluence/).
+
 ## Adding a connector
 
 Subclass `BaseForcingConnector` (optionally mix in `ZarrStoreMixin`), implement

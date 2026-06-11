@@ -38,6 +38,7 @@ nav:
   - Python API: python-api.md
   - Provider Catalog: catalog.md
   - Canonical Schema (canonical-v1): canonical-v1.md
+  - SYMFLUENCE Integration: symfluence.md
   - API Reference: reference.md
 
 markdown_extensions:
