@@ -10,19 +10,34 @@ harmonizes ``precipitation`` (mm per step) to the canonical ``precipitation_flux
 
 Temporal resolution is exposed as the product id (``mswep:daily``,
 ``mswep:3hourly``), each with its own constant conversion (daily ``/86400``,
-3-hourly ``/10800``). The MSWEP version (``V280``/``V300``) and the rclone remote
-name are connector ``config`` knobs (remote also read from ``MSWEP_RCLONE_REMOTE``).
+3-hourly ``/10800``).
+
+The Drive layout (per the official GloH2O V3.x documentation) is
+``MSWEP_{VERSION}/{Past|Past_nogauge|NRT}/{Hourly|3hourly|Daily|Monthly}/`` with
+day-of-year filenames and **no per-year subfolders**: daily ``YYYYDOY.nc``,
+3-hourly ``YYYYDOY.HH.nc`` (worked example: ``MSWEP_V315/Past/Hourly/2020116.18.nc``).
+Connector ``config`` knobs: ``version`` (default ``V316`` → folder
+``MSWEP_V316``), ``product`` (``Past``/``Past_nogauge``/``NRT``, default
+``Past``), and the rclone ``remote`` name (also read from
+``MSWEP_RCLONE_REMOTE``). The Past→NRT cutover is a moving boundary maintained
+by GloH2O (Past trails the present by a few months), so the connector cannot
+pick the product level by date — request NRT explicitly for near-real-time
+windows.
+
+⚠ GloH2O flags a low-precipitation artifact over 2000–2015 in V3.15/V3.16;
+pin ``version`` to an earlier release if that window matters.
 
 Out-of-band access: needs ``rclone`` installed + GloH2O-granted Drive access, so
-this connector is offline-verified (path/conversion logic) and flagged for a
-first authenticated run. The Monthly resolution is deferred (variable-length
-month → non-constant flux scale).
+this connector is offline-verified (path/conversion logic against the documented
+worked example) and flagged for a first authenticated run. The Monthly
+resolution is deferred (variable-length month → non-constant flux scale).
 """
 
 from __future__ import annotations
 
 import io
 import os
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -53,7 +68,13 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-VERSIONS = {"V280": "MSWEP_V280", "V300": "MSWEP_V300"}
+DEFAULT_VERSION = "V316"
+_VERSION_RE = re.compile(r"^V\d{3}$")  # V280, V300, V315, V316, ... → MSWEP_{version}
+# Product level under the version folder. Past (gauge-corrected historical) vs
+# NRT (near-real-time) split at a moving, GloH2O-maintained cutover the
+# connector cannot know statically → default Past, override via config.
+PRODUCTS = ("Past", "Past_nogauge", "NRT")
+DEFAULT_PRODUCT = "Past"
 _PRECIP_CANDIDATES = ("precipitation", "precip")
 
 # resolution → (remote subdir, seconds-per-step, temporal enum)
@@ -88,9 +109,17 @@ class MSWEPConnector(RcloneMixin, BaseForcingConnector):
         super().__init__(config)
         cfg = self.config or {}
         self.remote = cfg.get("remote") or os.environ.get("MSWEP_RCLONE_REMOTE", "GoogleDrive")
-        self.version = cfg.get("version", "V300")
-        if self.version not in VERSIONS:
-            raise SubsetError(f"Unknown MSWEP version '{self.version}' (use V280/V300)")
+        self.version = cfg.get("version", DEFAULT_VERSION)
+        if not _VERSION_RE.match(self.version):
+            raise SubsetError(
+                f"Unknown MSWEP version '{self.version}' (use the GloH2O folder "
+                "suffix, e.g. V280/V300/V315/V316)"
+            )
+        self.product = cfg.get("product", DEFAULT_PRODUCT)
+        if self.product not in PRODUCTS:
+            raise SubsetError(
+                f"Unknown MSWEP product '{self.product}' (use {'/'.join(PRODUCTS)})"
+            )
 
     async def list_products(self) -> list[ForcingProduct]:
         products = []
@@ -124,16 +153,18 @@ class MSWEPConnector(RcloneMixin, BaseForcingConnector):
         """Yield (timestamp, remote relative path) for the requested window."""
         import pandas as pd
 
-        folder = VERSIONS[self.version]
-        subdir = RESOLUTIONS[resolution][0]
+        # Documented GloH2O layout: {VERSION}/{product}/{resolution}/YYYYDOY[.HH].nc
+        # — flat day-of-year filenames including the year, NO per-year subfolder.
+        # Worked example: MSWEP_V315/Past/Hourly/2020116.18.nc.
+        prefix = f"MSWEP_{self.version}/{self.product}/{RESOLUTIONS[resolution][0]}"
         if resolution == "daily":
             for d in pd.date_range(time_range.start.date(), time_range.end.date(), freq="D"):
                 doy = d.timetuple().tm_yday
-                yield d, f"{folder}/{subdir}/{d.year}/{doy:03d}.nc"
+                yield d, f"{prefix}/{d.year}{doy:03d}.nc"
         else:  # 3hourly
             for ts in pd.date_range(time_range.start, time_range.end, freq="3h"):
                 doy = ts.timetuple().tm_yday
-                yield ts, f"{folder}/{subdir}/{ts.year}/{doy:03d}{ts.hour:02d}.nc"
+                yield ts, f"{prefix}/{ts.year}{doy:03d}.{ts.hour:02d}.nc"
 
     async def fetch(
         self,
@@ -197,7 +228,7 @@ class MSWEPConnector(RcloneMixin, BaseForcingConnector):
             product=product,
             bbox=bbox,
             time_range=time_range,
-            provenance=f"MSWEP {self.version} {resolution} via rclone/Drive; canonical-v1",
+            provenance=f"MSWEP {self.version} {self.product} {resolution} via rclone/Drive; canonical-v1",
             t0=t0,
             settings=settings,
             lazy=False,

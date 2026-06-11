@@ -23,6 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails without) SYMFLUENCE, and SYMFLUENCE is **not** a dependency.
   Documented in `docs/symfluence.md`.
 
+### Fixed
+
+- **MSWEP Drive paths corrected to the documented GloH2O V3.x layout**
+  (`{VERSION}/{Past|Past_nogauge|NRT}/{3hourly|Daily}/YYYYDOY[.HH].nc`):
+  the connector previously planned paths with a spurious per-year subfolder,
+  no product level, and filenames missing the year and hour separator
+  (e.g. `MSWEP_V300/3hourly/2023/15200.nc` instead of
+  `MSWEP_V316/Past/3hourly/2023152.00.nc`). Default version is now `V316`
+  (folder `MSWEP_V316`) and the product level (`Past`/`Past_nogauge`/`NRT`)
+  is a new config knob defaulting to `Past` (the Past→NRT cutover is a
+  moving GloH2O boundary, not statically derivable from the date).
+  Doc-validated against the official worked example
+  (`MSWEP_V315/Past/Hourly/2020116.18.nc`) and offline-tested; still
+  `verified: false` pending a live authenticated rclone run. Caveat: GloH2O
+  flags a 2000–2015 low-precipitation artifact in V3.15/V3.16.
+
 ## [0.2.0] — 2026-06-11
 
 ### Added

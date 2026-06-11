@@ -27,11 +27,21 @@ async def test_products_per_resolution():
     assert ids == {"mswep:daily", "mswep:3hourly"}
 
 
-def test_version_and_remote_config():
-    assert MSWEPConnector().version == "V300"
+def test_version_product_and_remote_config():
+    assert MSWEPConnector().version == "V316"
+    assert MSWEPConnector().product == "Past"
     assert MSWEPConnector().remote == "GoogleDrive"
-    c = MSWEPConnector(config={"version": "V280", "remote": "MyDrive"})
-    assert c.version == "V280" and c.remote == "MyDrive"
+    c = MSWEPConnector(config={"version": "V280", "product": "NRT", "remote": "MyDrive"})
+    assert c.version == "V280" and c.product == "NRT" and c.remote == "MyDrive"
+
+
+def test_invalid_version_or_product_rejected():
+    from cfs.core.exceptions import SubsetError
+
+    with pytest.raises(SubsetError):
+        MSWEPConnector(config={"version": "3.16"})
+    with pytest.raises(SubsetError):
+        MSWEPConnector(config={"product": "Future"})
 
 
 def test_remote_from_env(monkeypatch):
@@ -39,13 +49,15 @@ def test_remote_from_env(monkeypatch):
     assert MSWEPConnector().remote == "EnvDrive"
 
 
-# ── Remote path enumeration (day-of-year layout) ─────────────────────
+# ── Remote path enumeration (documented GloH2O day-of-year layout) ───
+# {VERSION}/{Past|Past_nogauge|NRT}/{3hourly|Daily}/YYYYDOY[.HH].nc — no
+# per-year subfolder; worked example MSWEP_V315/Past/Hourly/2020116.18.nc.
 
 def test_daily_paths():
-    conn = MSWEPConnector(config={"version": "V300"})
+    conn = MSWEPConnector()
     tr = TimeRange(start=datetime(2015, 1, 1), end=datetime(2015, 1, 2))
     paths = [rel for _ts, rel in conn._relative_paths("daily", tr)]
-    assert paths == ["MSWEP_V300/Daily/2015/001.nc", "MSWEP_V300/Daily/2015/002.nc"]
+    assert paths == ["MSWEP_V316/Past/Daily/2015001.nc", "MSWEP_V316/Past/Daily/2015002.nc"]
 
 
 def test_3hourly_paths_include_hour():
@@ -53,10 +65,27 @@ def test_3hourly_paths_include_hour():
     tr = TimeRange(start=datetime(2015, 1, 1, 0), end=datetime(2015, 1, 1, 6))
     paths = [rel for _ts, rel in conn._relative_paths("3hourly", tr)]
     assert paths == [
-        "MSWEP_V280/3hourly/2015/00100.nc",
-        "MSWEP_V280/3hourly/2015/00103.nc",
-        "MSWEP_V280/3hourly/2015/00106.nc",
+        "MSWEP_V280/Past/3hourly/2015001.00.nc",
+        "MSWEP_V280/Past/3hourly/2015001.03.nc",
+        "MSWEP_V280/Past/3hourly/2015001.06.nc",
     ]
+
+
+def test_3hourly_documented_worked_example():
+    # GloH2O docs worked example (hourly): MSWEP_V315/Past/Hourly/2020116.18.nc
+    # → the same date/hour at 3-hourly, default version/product, must be
+    # MSWEP_V316/Past/3hourly/2020116.18.nc (2020-04-25 is DOY 116, leap year).
+    conn = MSWEPConnector()
+    tr = TimeRange(start=datetime(2020, 4, 25, 18), end=datetime(2020, 4, 25, 18))
+    paths = [rel for _ts, rel in conn._relative_paths("3hourly", tr)]
+    assert paths == ["MSWEP_V316/Past/3hourly/2020116.18.nc"]
+
+
+def test_nrt_product_level_override():
+    conn = MSWEPConnector(config={"product": "NRT"})
+    tr = TimeRange(start=datetime(2026, 1, 1), end=datetime(2026, 1, 1))
+    paths = [rel for _ts, rel in conn._relative_paths("daily", tr)]
+    assert paths == ["MSWEP_V316/NRT/Daily/2026001.nc"]
 
 
 # ── Unit conversions per resolution ──────────────────────────────────

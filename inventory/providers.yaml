@@ -591,17 +591,18 @@
   auth: rclone_gdrive         # needs rclone installed + GloH2O-granted Drive access
   bbox: [-180.0, -90.0, 180.0, 90.0]
   temporal_resolution: daily/3hourly
-  version_remote: "config knobs (version default V300; remote default GoogleDrive / MSWEP_RCLONE_REMOTE env)"
+  version_remote: "config knobs (version default V316; product Past/Past_nogauge/NRT default Past; remote default GoogleDrive / MSWEP_RCLONE_REMOTE env)"
   license: "MSWEP — free for research after GloH2O registration."
   citation: "Beck et al. (2019), MSWEP V2, BAMS 100:473-500."
   products: 2                 # resolution=product-id: mswep:daily, mswep:3hourly
   canonical_variables:
     - precipitation_flux       # daily mm/day ->/86400 ; 3hourly mm/3hr ->/10800
-  note: "OUT-OF-BAND access: rclone cat --drive-shared-with-me streams per-step NetCDFs. OFFLINE-VERIFIED only (no rclone/access here); clear RegistrationRequiredError if rclone missing. Monthly resolution deferred (variable-length month = non-constant flux scale). New protocol mixin cfs.connectors.protocols.rclone."
+  note: "OUT-OF-BAND access: rclone cat --drive-shared-with-me streams per-step NetCDFs. OFFLINE-VERIFIED only (no rclone/access here); clear RegistrationRequiredError if rclone missing. Drive paths fixed to the documented GloH2O V3.x layout {VERSION}/{Past|Past_nogauge|NRT}/{3hourly|Daily}/YYYYDOY[.HH].nc — flat day-of-year filenames including the year, NO per-year subfolder (doc worked example MSWEP_V315/Past/Hourly/2020116.18.nc); doc-validated + offline-tested, still pending a live authenticated run. Past/NRT cutover is a moving GloH2O boundary, so the product level is a config knob (default Past), not date-derived. Monthly resolution deferred (variable-length month = non-constant flux scale). Protocol mixin cfs.connectors.protocols.rclone."
   status: implemented
   verified: false
   caveats:
     - "distributed only via a GloH2O-shared Google Drive folder; needs the external rclone CLI plus a configured Drive remote with granted access"
+    - "GloH2O flags a low-precipitation artifact over 2000-2015 in V3.15/V3.16 (V316 is the connector default); pin an earlier version via the 'version' config knob if that window matters"
 
 - slug: em_earth
   name: EM-Earth (0.1° daily, global; AWS S3, credential-gated)
