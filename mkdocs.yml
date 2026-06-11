@@ -1,0 +1,66 @@
+site_name: CFS — Community Forcing Service
+site_description: Acquire-and-subset access to meteorological forcing for hydrological models
+site_url: https://darriey.github.io/CFS/
+repo_url: https://github.com/DarriEy/CFS
+repo_name: DarriEy/CFS
+copyright: Copyright &copy; 2026 Darri Eythorsson — MIT License
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Quick Start: quickstart.md
+  - CLI: cli.md
+  - Python API: python-api.md
+  - Provider Catalog: catalog.md
+  - Canonical Schema (canonical-v1): canonical-v1.md
+  - API Reference: reference.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            members_order: source
+            docstring_style: sphinx
+            separate_signature: true
+            show_signature_annotations: true

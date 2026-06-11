@@ -21,6 +21,9 @@ venv/
 # Claude Code harness (session-local)
 .claude/
 
+# mkdocs build output
+site/
+
 # probe / scratch
 probe_*.py
 .probe_results.txt
