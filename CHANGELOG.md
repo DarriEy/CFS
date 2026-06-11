@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_v1.1`. It now parses the `_vN[.N…]` suffix into a numeric version tuple
   (unsuffixed = version 0) and picks the highest, so `_v10.0` beats `_v2.0`
   regardless of listing order.
+- **NLDAS-2 fetch batched to one request per hour-file**: each hour was
+  opened lazily via pydap and pulled per variable (~10 HTTP round-trips per
+  hour-file, projected >3 h for a 49-hour window). The connector now issues
+  a single combined OPeNDAP constraint request per hour
+  (`…nc4?Tair[0][lat][lon],…,time[0],lat[…],lon[…]` — all requested
+  variables plus coordinates, server-side cropped via hyperslab indices on
+  the fixed 0.125° grid, trimmed locally to the exact bbox), concurrent up
+  to `CFS_FETCH_CONCURRENCY`. Live-verified against GES DISC.
 
 ## [0.2.0] — 2026-06-11
 

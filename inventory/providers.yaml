@@ -275,11 +275,11 @@
     - surface_downwelling_longwave_flux
     - surface_downwelling_shortwave_flux
     - precipitation_flux                    # Rainf hourly accum (kg m-2) -> /3600
-  note: "ONE OPeNDAP file PER HOUR — slow for long ranges (warned). Vars are CF names Tair/Qair/PSurf/Wind_E/Wind_N/LWdown/SWdown/Rainf (probe-corrected from GRIB names). LIVE-VERIFIED."
+  note: "ONE file PER HOUR, fetched as a single combined OPeNDAP constraint request (.nc4?var[0][lat][lon],... all vars + coords, server-side crop on the fixed 0.125deg grid) instead of the old lazy pydap per-variable pulls (~10 round-trips/hour-file). Vars are CF names Tair/Qair/PSurf/Wind_E/Wind_N/LWdown/SWdown/Rainf (probe-corrected from GRIB names). LIVE-VERIFIED (incl. the combined-constraint path)."
   status: implemented
   verified: true
   caveats:
-    - "opens one OPeNDAP endpoint per hour — fine for short windows, slow for long ranges (warned in the FetchResult)"
+    - "one HTTP request per hour-file (combined subset, concurrent up to CFS_FETCH_CONCURRENCY) — fine for typical windows, still noted in FetchResult warnings for long ranges"
 
 - slug: gpm
   name: GPM IMERG Daily precipitation (0.1°, via OPeNDAP)
