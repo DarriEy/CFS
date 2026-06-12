@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **EM-Earth unblocked via FRDR anonymous HTTPS** (`source: "frdr"` +
+  `data_dir` staging on the `em_earth` connector). FRDR's documented stable
+  per-file links (`…/repo/files/6/published/publication_542/submitted_data/
+  EM_Earth_v1/…`) redirect to a Globus HTTPS collection that serves
+  *anonymous* GETs (live-verified 2026-06-12), and the `EM_Earth_v1/` layout
+  mirrors the S3 keys under `nc/` exactly — so the connector reuses its key
+  construction (deterministic daily only; FRDR's probabilistic tree is
+  continent/member-split). `data_dir` doubles as a local-staging mode:
+  pre-staged files (archive-relative or flat) are picked up before any
+  network access, and FRDR downloads are cached there. The monthly files are
+  whole-globe (~100–300 MB each); without `data_dir` they go to a warned
+  temp cache. The S3 permission error now points at all three escape
+  hatches. Live-validated end-to-end (exp17, Colorado 2018-06): canonical
+  output bitwise-identical to the documented derivations applied to the raw
+  FRDR values.
+
+### Changed
+
+- **EM-Earth precip units VERIFIED, warning retired**: the FRDR file attrs
+  read `prcp: mm day-1` and `tmean`/`tdew: Celsius` — exactly the
+  connector's long-standing assumption (`/86400`, `+273.15`). The per-fetch
+  "units unverified" warning is removed; the mapping note now records the
+  verification. (`EM-EARTH` remains excluded from the parity-gated
+  SYMFLUENCE capability table: the *native* acquirer is S3-only —
+  credentialed via `EM_EARTH_S3_ANON: false` but with no FRDR route or
+  local-staging mode against the 403-gated bucket — so
+  native-vs-community parity stays pending AWS credentials.)
+
 - **Four newly parity-gated SYMFLUENCE datasets** (live experiments
   2026-06-12, both sides reading the same upstream archives; campaign
   completed across three sessions with the CDS legs resumed by request ID):

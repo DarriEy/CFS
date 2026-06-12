@@ -1,32 +1,45 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2026 CFS Contributors
-"""EM-Earth connector — global daily met reanalysis on AWS S3 (credential-gated).
+"""EM-Earth connector — global daily met reanalysis (S3 or FRDR HTTPS).
 
 EM-Earth (Tang et al. 2022) is a 0.1° global daily product (1950-2019) merging
-gauge + reanalysis, in deterministic and probabilistic variants, on the
-``emearth`` S3 bucket as per-variable, per-month NetCDFs.
+gauge + reanalysis, in deterministic and probabilistic variants, stored as
+per-variable, per-month NetCDFs.
 
-⚠ Two caveats, both confirmed by probing:
+Three access routes (``config={"source": ..., "data_dir": ...}``):
 
-1. **Access.** The ``emearth`` bucket currently allows anonymous *listing* but
-   *denies anonymous GET* (every region, even requester-pays) — it needs AWS
-   credentials. So this connector defaults to anonymous and raises a clear error
-   pointing at that; pass ``config={"anon": False}`` to use the standard AWS
-   credential chain once you have bucket access. (SYMFLUENCE's handler assumed
-   anonymous access and silently produced "no data" when it 403s.)
+1. **S3** (``source: "s3"``, default): the ``emearth`` bucket allows anonymous
+   *listing* but *denies anonymous GET* (every region, even requester-pays) —
+   it needs AWS credentials. The connector defaults to anonymous and raises a
+   clear error pointing at that; pass ``config={"anon": False}`` to use the
+   standard AWS credential chain once you have bucket access. (SYMFLUENCE's
+   handler assumed anonymous access and silently produced "no data" on 403s.)
 
-2. **Precip units UNVERIFIED.** EM-Earth daily ``prcp`` is *assumed* mm/day
-   (→ ``/86400``), but this could not be confirmed against a file (no read
-   access), and a unit error here would NOT be caught by range QC (mm/day and
-   mm/h both fall in the valid flux range). Every fetch that includes
-   precipitation therefore carries an explicit warning. Temperature is safe —
-   a °C-vs-K mistake blows the canonical range and QC flags it.
+2. **FRDR HTTPS** (``source: "frdr"``): the authoritative FRDR archive
+   (DOI 10.20383/102.0547) serves every file over *anonymous* per-file HTTPS
+   (live-verified 2026-06-12). The relative layout under ``EM_Earth_v1/``
+   matches the S3 layout under ``nc/`` exactly, so the same keys resolve.
+   Files are whole-month globals (~100-300 MB each); they are cached in
+   ``data_dir`` when given. Deterministic-daily only — the probabilistic
+   archive on FRDR is split by continent/member and does not mirror the S3
+   keys.
+
+3. **Local staging** (``data_dir``): pre-staged files (FRDR/Globus downloads)
+   are picked up from ``<data_dir>/<variant_folder>/<var>/<filename>`` or flat
+   ``<data_dir>/<filename>`` before any network access, regardless of source.
+
+Precip units: EM-Earth daily ``prcp`` is mm/day (→ ``/86400``) — **verified**
+2026-06-12 against the FRDR deterministic daily file's own attrs
+(``units: 'mm day-1'``). Note the files also carry ``prcp_corrected`` (PBCOR
+WorldClim-corrected); this connector ships the raw ``prcp``, matching the
+native SYMFLUENCE handler. Temperatures are °C → +273.15 (QC-protected).
 """
 
 from __future__ import annotations
 
 import io
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
@@ -56,29 +69,33 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 BUCKET = "emearth"
-VARIANTS = {"deterministic": "nc/deterministic_raw_daily", "probabilistic": "nc/probabilistic_daily"}
+# variant -> archive folder; S3 prefixes it with "nc/", FRDR with "EM_Earth_v1/".
+VARIANTS = {"deterministic": "deterministic_raw_daily", "probabilistic": "probabilistic_daily"}
+SOURCES = ("s3", "frdr")
+# FRDR's documented stable per-file link (302s to the Globus HTTPS collection).
+FRDR_BASE = (
+    "https://www.frdr-dfdr.ca/repo/files/6/published/publication_542/"
+    "submitted_data/EM_Earth_v1"
+)
 
-# tmean/tdew are °C → +273.15 (QC-protected). prcp is BEST-EFFORT mm/day → /86400.
+# tmean/tdew are °C → +273.15 (QC-protected). prcp is mm/day → /86400, verified
+# against the FRDR file attrs (units: 'mm day-1', 2026-06-12).
 _MAPPINGS: list[VariableMapping] = [
     VariableMapping("tmean", CanonicalVar.AIR_TEMPERATURE, offset=273.15),
     VariableMapping("tdew", CanonicalVar.DEWPOINT_TEMPERATURE, offset=273.15),
     VariableMapping(
         "prcp", CanonicalVar.PRECIPITATION_FLUX, scale=1.0 / 86400.0,
-        note="EM-Earth daily prcp ASSUMED mm/day -> flux (UNVERIFIED)",
+        note="EM-Earth daily prcp mm/day -> flux (verified vs FRDR file attrs)",
     ),
 ]
 # canonical → source var the mapping reads (for request-driven file selection).
 _SRC = {m.canonical: m.source_name for m in _MAPPINGS}
-_PRECIP_WARNING = (
-    "EM-Earth precipitation units are assumed mm/day (unverified — confirm against "
-    "a file before scientific use)"
-)
 
 
 @register("em_earth")
 class EMEarthConnector(BaseForcingConnector):
     slug = "em_earth"
-    display_name = "EM-Earth (0.1° daily, global; AWS S3, credential-gated)"
+    display_name = "EM-Earth (0.1° daily, global; S3 credential-gated / FRDR HTTPS)"
     base_url = f"s3://{BUCKET}"
     protocol = "s3_direct"
 
@@ -89,7 +106,20 @@ class EMEarthConnector(BaseForcingConnector):
         self.variant = cfg.get("variant", "deterministic")
         if self.variant not in VARIANTS:
             raise SubsetError(f"Unknown EM-Earth variant '{self.variant}' (deterministic/probabilistic)")
+        self.source = cfg.get("source", "s3")
+        if self.source not in SOURCES:
+            raise SubsetError(f"Unknown EM-Earth source '{self.source}' (s3/frdr)")
+        if self.source == "frdr" and self.variant != "deterministic":
+            raise SubsetError(
+                "EM-Earth source 'frdr' supports only the deterministic variant: "
+                "FRDR's probabilistic archive is split by continent/member and "
+                "does not mirror the S3 key layout. Stage probabilistic files "
+                "via Globus and point data_dir at them instead."
+            )
+        data_dir = cfg.get("data_dir")
+        self.data_dir = Path(data_dir) if data_dir else None
         self._fs = None
+        self._tmp_cache: Path | None = None
 
     def _filesystem(self):
         if self._fs is None:
@@ -110,8 +140,8 @@ class EMEarthConnector(BaseForcingConnector):
                 name=f"EM-Earth {self.variant} daily (0.1°, global)",
                 description=(
                     f"EM-Earth {self.variant} daily met (temperature, dewpoint, "
-                    "precipitation). AWS bucket is credential-gated; precip units "
-                    "unverified (see connector docstring)."
+                    "precipitation). AWS bucket is credential-gated; the FRDR "
+                    "archive serves anonymous per-file HTTPS (source='frdr')."
                 ),
                 variables=[
                     ProductVariable(canonical=m.canonical, source_name=m.source_name)
@@ -130,10 +160,122 @@ class EMEarthConnector(BaseForcingConnector):
             )
         ]
 
+    def _fname(self, var: str, year: int, month: int) -> str:
+        return f"EM_Earth_{self.variant}_daily_{var}_{year}{month:02d}.nc"
+
     def _key(self, var: str, year: int, month: int) -> str:
         folder = VARIANTS[self.variant]
-        fname = f"EM_Earth_{self.variant}_daily_{var}_{year}{month:02d}.nc"
-        return f"{BUCKET}/{folder}/{var}/{fname}"
+        return f"{BUCKET}/nc/{folder}/{var}/{self._fname(var, year, month)}"
+
+    def _frdr_url(self, var: str, year: int, month: int) -> str:
+        folder = VARIANTS[self.variant]
+        return f"{FRDR_BASE}/{folder}/{var}/{self._fname(var, year, month)}"
+
+    def _staged_path(self, var: str, year: int, month: int) -> Path | None:
+        """Locate a pre-staged monthly file under ``data_dir`` (if any).
+
+        Looks for the archive-relative layout ``<variant_folder>/<var>/<fname>``
+        first, then a flat ``<fname>`` directly under ``data_dir``.
+        """
+        if self.data_dir is None:
+            return None
+        fname = self._fname(var, year, month)
+        for cand in (self.data_dir / VARIANTS[self.variant] / var / fname,
+                     self.data_dir / fname):
+            if cand.is_file():
+                return cand
+        return None
+
+    def _frdr_download(self, var: str, year: int, month: int) -> Path | None:
+        """Download one monthly file from FRDR's anonymous per-file HTTPS route.
+
+        Streams into ``data_dir`` (archive-relative layout) when configured,
+        otherwise into a per-connector temp cache. Returns None on 404 (month
+        outside the archive); raises ``SubsetError`` on other HTTP failures.
+        """
+        import tempfile
+
+        import requests
+
+        url = self._frdr_url(var, year, month)
+        if self.data_dir is not None:
+            dest = self.data_dir / VARIANTS[self.variant] / var / self._fname(var, year, month)
+        else:
+            if self._tmp_cache is None:
+                self._tmp_cache = Path(tempfile.mkdtemp(prefix="cfs_em_earth_"))
+                logger.warning(
+                    "em_earth: no data_dir configured — FRDR downloads "
+                    "(~100-300 MB per variable-month) go to a temp cache and "
+                    "are not reused across sessions",
+                    tmp_cache=str(self._tmp_cache),
+                )
+            dest = self._tmp_cache / self._fname(var, year, month)
+        if dest.is_file():
+            return dest
+
+        logger.info("em_earth: downloading from FRDR", url=url, dest=str(dest))
+        resp = requests.get(url, stream=True, timeout=600, allow_redirects=True)
+        if resp.status_code == 404:
+            return None
+        if resp.status_code in (401, 403):
+            raise RegistrationRequiredError(
+                self.slug,
+                "https://www.frdr-dfdr.ca/repo/dataset/8d30ab02-f2bd-4d05-ae43-11f4a387e5ad",
+                f"FRDR denied access to {url} (HTTP {resp.status_code}). The "
+                "per-file HTTPS route was anonymous when last verified "
+                "(2026-06-12); if it is gated now, stage files via Globus and "
+                "set config={'data_dir': ...}.",
+            )
+        try:
+            resp.raise_for_status()
+        except Exception as e:
+            raise SubsetError(f"FRDR download failed for {url}: {e}") from e
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        part = dest.with_suffix(dest.suffix + ".part")
+        try:
+            with open(part, "wb") as fh:
+                for chunk in resp.iter_content(chunk_size=1 << 20):
+                    fh.write(chunk)
+            part.replace(dest)
+        finally:
+            part.unlink(missing_ok=True)
+        return dest
+
+    def _open_month(self, var: str, year: int, month: int) -> xr.Dataset | None:
+        """Open one variable-month as a lazy dataset, or None if unavailable.
+
+        Order: pre-staged ``data_dir`` file (no network), then the configured
+        source (S3 needs bucket credentials; FRDR is anonymous HTTPS).
+        """
+        import xarray as xr
+
+        staged = self._staged_path(var, year, month)
+        if staged is not None:
+            return xr.open_dataset(staged, engine="h5netcdf")
+
+        if self.source == "frdr":
+            path = self._frdr_download(var, year, month)
+            if path is None:
+                return None
+            return xr.open_dataset(path, engine="h5netcdf")
+
+        fs = self._filesystem()
+        key = self._key(var, year, month)
+        try:
+            raw = fs.cat_file(key)
+        except PermissionError as e:
+            raise RegistrationRequiredError(
+                self.slug,
+                "https://www.frdr-dfdr.ca/repo/dataset/8d30ab02-f2bd-4d05-ae43-11f4a387e5ad",
+                "The 'emearth' S3 bucket denied access. It is no longer anonymously "
+                "readable — provide AWS credentials with bucket access (config={'anon': "
+                "False} + standard AWS credential chain), use the anonymous FRDR HTTPS "
+                "route (config={'source': 'frdr'}), or stage FRDR/Globus downloads "
+                "locally (config={'data_dir': ...}).",
+            ) from e
+        except (FileNotFoundError, OSError):
+            return None
+        return xr.open_dataset(io.BytesIO(raw), engine="h5netcdf")
 
     async def fetch(
         self,
@@ -156,10 +298,7 @@ class EMEarthConnector(BaseForcingConnector):
             raise SubsetError("None of the requested variables are offered by EM-Earth")
         src_vars = [m.source_name for m in selected]
 
-        fs = self._filesystem()
         warnings: list[str] = []
-        if CanonicalVar.PRECIPITATION_FLUX in wanted:
-            warnings.append(_PRECIP_WARNING)
 
         # (year, month) chunks over the request, clamped to the 1950-2019 record.
         months = pd.date_range(
@@ -173,25 +312,16 @@ class EMEarthConnector(BaseForcingConnector):
             for ms in months:
                 if not (1950 <= ms.year <= 2019):
                     continue
-                key = self._key(var, ms.year, ms.month)
-                try:
-                    raw = fs.cat_file(key)
-                except PermissionError as e:
-                    raise RegistrationRequiredError(
-                        self.slug,
-                        "https://www.frdr-dfdr.ca/ (EM-Earth dataset)",
-                        "The 'emearth' S3 bucket denied access. It is no longer anonymously "
-                        "readable — provide AWS credentials with bucket access (config={'anon': "
-                        "False} + standard AWS credential chain), or obtain EM-Earth from FRDR.",
-                    ) from e
-                except (FileNotFoundError, OSError):
+                ds_month = self._open_month(var, ms.year, ms.month)
+                if ds_month is None:
                     continue
-                ds = xr.open_dataset(io.BytesIO(raw), engine="h5netcdf")[[var]]
+                ds = ds_month[[var]]
                 plan = plan_bbox_subset(ds, bbox, lat_name="lat", lon_name="lon")
                 ds = apply_bbox_subset(ds, plan, lat_name="lat", lon_name="lon")
                 ds = ds.sel(time=slice(time_range.start, time_range.end))
                 if ds.sizes.get("time", 0) > 0:
                     chunks.append(ds.load())
+                ds_month.close()
             if chunks:
                 per_var_concat[var] = xr.concat(chunks, dim="time")
 
@@ -205,7 +335,7 @@ class EMEarthConnector(BaseForcingConnector):
             product=product,
             bbox=bbox,
             time_range=time_range,
-            provenance=f"EM-Earth {self.variant} S3 (credential-gated); canonical-v1",
+            provenance=f"EM-Earth {self.variant} via {self.source}; canonical-v1",
             t0=t0,
             settings=settings,
             lazy=False,

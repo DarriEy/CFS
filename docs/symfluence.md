@@ -169,11 +169,17 @@ all on the validated branch — and its OPeNDAP URL is `https://`-hardcoded
 (fails under libnetcdf ≥ 4.10 probing); there is no THREDDS-NCSS fallback
 (ORNL's legacy THREDDS endpoint now 404s into the same DMR++ backend).
 
-**Excluded:** `MSWEP` and `EM-EARTH` are *not claimed* until live parity
-validation is possible (blocked: no rclone Google Drive remote for MSWEP; the
-EM-Earth S3 bucket denies anonymous GET — and the FRDR archive is
-Globus-only, see the [catalog notes](catalog.md)). Their native handlers
-keep running untouched under every `DATA_ACCESS` value.
+**Excluded:** `MSWEP` and `EM-EARTH` are *not claimed* until live
+native-vs-community parity validation is possible (blocked: no rclone Google
+Drive remote for MSWEP; the EM-Earth S3 bucket denies anonymous GET and the
+*native* acquirer is S3-only — credentialed via `EM_EARTH_S3_ANON: false`
+but with no FRDR route or local-staging mode — so there is nothing
+native-side to compare against without AWS credentials).
+Their native handlers keep running untouched under every `DATA_ACCESS` value.
+Note the *CFS-side* EM-Earth blocker is gone: the connector now has an
+anonymous FRDR HTTPS source and `data_dir` staging, with units file-verified
+and the canonical derivations validated bitwise against raw FRDR values
+(exp17) — see the [catalog notes](catalog.md).
 
 ## Per-dataset opt-out
 

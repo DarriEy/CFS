@@ -51,7 +51,7 @@ and the registry is discoverable at runtime (`cfs providers`,
 | `nclimgrid_daily` | NOAA nClimGrid-Daily (5 km, CONUS) | regular | OPeNDAP | anonymous | live |
 | `narr` | NOAA NARR daily monolevel fields (32 km) | 2-D LCC | OPeNDAP | anonymous | live |
 | `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | Drive access | offline |
-| `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 | AWS credentials | offline |
+| `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 / FRDR HTTPS / local staging | AWS credentials (S3) or anonymous (FRDR) | live |
 
 "live" means a real fetch against the upstream store returned physical values;
 "live (creds)" the same, using real CDS or Earthdata credentials; "offline"
@@ -94,32 +94,43 @@ synthetic data but a live fetch is pending access (see the notes below).
        (`/tmp/parity-exp/validate_mswep_when_unblocked.sh`) to exercise the
        doc-fixed paths on both the CFS and SYMFLUENCE sides and record a
        parity grade.
-- **`em_earth`** — the S3 bucket **denies anonymous reads** (allows listing
-  only), so it needs AWS credentials (`config={"anon": False}`).
-  Offline-verified. Its daily `prcp` units are **unverified** (assumed
-  mm/day); every precipitation fetch carries an explicit warning, since
-  range-QC cannot catch a precipitation unit error.
+- **`em_earth`** — two sources. The default S3 bucket **denies anonymous
+  reads** (allows listing only), so it needs AWS credentials
+  (`config={"anon": False}`). The **FRDR route** (`config={"source":
+  "frdr"}`) needs no credentials at all: FRDR's documented stable per-file
+  links (`https://www.frdr-dfdr.ca/repo/files/6/published/publication_542/
+  submitted_data/EM_Earth_v1/…`) 302 to the Globus HTTPS collection
+  (`g-f0a056.cd4fe.0ec8.data.globus.org`), which serves **anonymous GETs**
+  — live-verified 2026-06-12 (an earlier probe of the landing page missed
+  this; the dataset page itself only advertises Globus transfer and the
+  email-gated Zip). The `EM_Earth_v1/` layout mirrors the S3 keys under
+  `nc/` exactly, so the same key construction serves both. Caveats: files
+  are whole-month globals (~100–300 MB per variable-month — set
+  `data_dir` so they are cached and reused), and the FRDR route covers the
+  **deterministic daily** product only (FRDR's probabilistic/hourly trees
+  are continent- and member-split).
 
-    The authoritative public archive is FRDR (DOI `10.20383/102.0547`,
-    dataset `8d30ab02-f2bd-4d05-ae43-11f4a387e5ad`), and it was probed
-    (2026-06-12) for a credential-free pathway: the landing page offers
-    exactly two mechanisms — **(a) Globus transfer** from collection
+    Pre-staged files (e.g. bulk Globus transfers from collection
     `515c70c4-2eb8-4f2a-b406-7959b5edc28d`, path
-    `/6/published/publication_542/submitted_data`, and **(b) "Download as
-    Zip"**, which is an email-gated request (you submit an address, FRDR
-    mails a link to a packaged archive of the dataset). There is **no
-    per-file HTTPS endpoint**, so no `frdr` source option exists on this
-    connector. To stage EM-Earth via Globus:
+    `/6/published/publication_542/submitted_data`) are picked up from
+    `config={"data_dir": ...}` — either the archive-relative layout
+    `<data_dir>/deterministic_raw_daily/<var>/<file>.nc` or flat
+    `<data_dir>/<file>.nc` — before any network access.
 
-    1. get a (free) Globus account — institutional or Globus ID;
-    2. install Globus Connect Personal (or use an institutional endpoint);
-    3. open the collection link from the FRDR landing page
-       (`globus.frdr.ca/file-manager?origin_id=515c70c4-2eb8-4f2a-b406-7959b5edc28d&origin_path=/6/published/publication_542/submitted_data`);
-    4. transfer the `deterministic_raw_daily` (or hourly) folders you need to
-       your endpoint;
-    5. point downstream tooling at the staged files (SYMFLUENCE:
-       `EM_EARTH_*` paths; the CFS connector's S3 route additionally needs
-       bucket credentials, which remain a separate blocker).
+    Units are **file-verified** (2026-06-12, FRDR deterministic daily):
+    `prcp` is `mm day-1` (→ `/86400`), temperatures `Celsius` (→ `+273.15`);
+    the long-standing "precip units unverified" warning is retired. The
+    files also carry `prcp_corrected` (PBCOR WorldClim-corrected); the
+    connector ships raw `prcp`, matching the native SYMFLUENCE handler.
+    Validation (exp17, Colorado box, 2018-06 ×14 days): CFS canonical
+    output is **bitwise identical** to the documented derivations applied
+    to the raw FRDR values (`tmean/tdew + 273.15` exactly;
+    `prcp × (1/86400)` exactly, ≤ 1 float32 ulp vs the `/86400` op order).
+    Native-vs-community parity remains **pending AWS credentials**: the
+    native acquirer is S3-only (it grew an `EM_EARTH_S3_ANON: false`
+    credentialed path after exp7, but has no FRDR route and no
+    local-staging mode for the daily product), and the bucket 403s
+    anonymous GETs.
 
 ### Forecasts
 
