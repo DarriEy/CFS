@@ -475,7 +475,7 @@ class _ShadowAcquirerBase(_AcquisitionBase):
                 "fix the SYMFLUENCE installation so its in-tree handler registers."
             )
         native = self._native_cls(self.config, self.logger, getattr(self, "reporting_manager", None))
-        self.logger.debug(f"{self._spec.family}: delegating to native SYMFLUENCE backend")
+        self.logger.info(f"{self._spec.family}: delegating to native SYMFLUENCE handler (backend != community)")
         return cast(Path, native.download(Path(output_dir)))
 
     # -- community acquisition --------------------------------------------
