@@ -133,6 +133,8 @@ module = [
     "gcsfs.*",
     "s3fs.*",
     "cfgrib.*",
+    "geopandas.*",
+    "shapely.*",
 ]
 ignore_missing_imports = true
 

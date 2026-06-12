@@ -1,46 +1,37 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2026 CFS Contributors
-"""SYMFLUENCE integration — CFS as a drop-in forcing backend + plugin.
+"""SYMFLUENCE integration — CFS as a formal AcquisitionBackend.
 
 This module wires CFS into SYMFLUENCE through the ``symfluence.plugins``
 entry-point group (see ``pyproject.toml``): ``import symfluence`` discovers the
-entry point and calls :func:`register`. Two modes coexist:
+entry point and calls :func:`register`, which adds exactly two things to the
+SYMFLUENCE registries:
 
-**1. Drop-in shadow mode (the primary mode).** For every *parity-validated*
-native forcing dataset (see :data:`SHADOW_SPECS`), :func:`register` captures
-the native SYMFLUENCE acquisition class from ``R.acquisition_handlers`` and
-re-registers a shadow wrapper under the **same name** (SYMFLUENCE registers
-its in-tree handlers before plugin discovery runs, and ``Registry.add``
-overwrites silently — verified empirically, 2026-06-11). Users keep their
-existing configs (``FORCING_DATASET: ERA5`` etc.); the wrapper routes at
-``download()`` time:
+1. :class:`CommunityForcingBackend` under ``R.acquisition_backends['community']``
+   — an implementation of SYMFLUENCE's versioned ``AcquisitionBackend``
+   protocol (``symfluence.data.backends.contract``). The backend *declares*
+   its parity-validated datasets via ``capabilities()`` and serves
+   ``acquire()`` requests through :func:`cfs.fetch_sync`, writing canonical-v1
+   NetCDF plus the sidecar ``acquisition_manifest.json`` that drives all
+   downstream schema dispatch. Selection is framework-side
+   (``DATA_ACCESS: community`` / per-dataset ``<NAME>_BACKEND`` keys); this
+   module no longer overwrites registry entries, captures native classes, or
+   self-detects file formats. CFS-internal failures are mapped onto the
+   protocol error taxonomy.
 
-* ``DATA_ACCESS: community`` → acquire via :func:`cfs.fetch_sync` and write
-  canonical-v1 NetCDF (global attr ``cfs_schema`` is the downstream detection
-  key).
-* anything else (default ``MAF``, or ``cloud``) → instantiate the captured
-  native class and delegate — **exactly** the native code runs, bit-identical
-  to an installation without this plugin.
-* per-dataset opt-out: a flat ``<NATIVE_NAME>_BACKEND: native`` key (e.g.
-  ``ERA5_BACKEND: native``) wins over the global ``DATA_ACCESS`` value.
+2. :class:`CanonicalV1Handler` under ``R.dataset_handlers['canonical-v1']`` —
+   ONE schema-keyed preprocessing handler for every canonical-v1 raw file,
+   regardless of dataset. SYMFLUENCE resolves it from the acquisition
+   manifest's declared schema (never by sniffing files). It supports both
+   grid classes of the canonical-v1 spec: regular 1-D latitude/longitude
+   grids and projected grids (rotated-pole / LCC) carrying native ``rlat``/
+   ``rlon`` or ``y``/``x`` dims with 2-D latitude/longitude coordinates.
 
-Matching **self-detecting dataset-handler shadows** are registered in
-``R.dataset_handlers``: each method that touches raw files first checks the
-``cfs_schema`` attribute (canonical-v1 → the CFS canonical→CFIF path; native
-format → delegate to the captured native dataset handler), so a domain can
-even mix cached native raw files with newly community-acquired ones.
+The module is intentionally decoupled (same pattern as before):
 
-**2. Parallel-name mode** (kept from 0.3.0). ``FORCING_DATASET: CFS`` +
-``CFS_PRODUCT: <provider:product>`` exposes the *whole* CFS catalog —
-including products with no SYMFLUENCE equivalent (GEFS, GFS, MERRA2, CHIRPS,
-GridMET, …) — via :class:`CFSForcingAcquirer` / :class:`CFSDatasetHandler`.
-
-The module is intentionally decoupled (same pattern as climaclass's
-SYMFLUENCE integration):
-
-* SYMFLUENCE base classes are resolved defensively at import time; if
-  SYMFLUENCE is absent the bases degrade to ``object`` so ``import cfs`` (and
-  ``import cfs.integrations.symfluence``) never fails.
+* SYMFLUENCE types are resolved defensively at import time; when SYMFLUENCE is
+  absent the bases degrade so ``import cfs.integrations.symfluence`` never
+  fails.
 * :func:`register` *does* import SYMFLUENCE — when it is absent the resulting
   ``ImportError`` is exactly what SYMFLUENCE's plugin discovery expects and
   silently skips.
@@ -50,28 +41,35 @@ SYMFLUENCE integration):
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 if TYPE_CHECKING:
     import xarray as xr
 
-# Resolve the SYMFLUENCE base classes defensively so importing this module
-# never hard-fails when SYMFLUENCE is not installed.
+# Resolve the SYMFLUENCE pieces defensively so importing this module never
+# hard-fails when SYMFLUENCE is not installed.
 try:  # pragma: no cover - exercised only with SYMFLUENCE present
-    from symfluence.data.acquisition.base import (
-        BaseAcquisitionHandler as _AcquisitionBase,
-    )
+    from symfluence.data.backends import contract as _contract
+    from symfluence.data.backends import errors as _errors
     from symfluence.data.preprocessing.dataset_handlers.base_dataset import (
         BaseDatasetHandler as _DatasetBase,
     )
 
     HAVE_SYMFLUENCE = True
 except Exception:  # noqa: BLE001 - any import failure means "not available"
-    _AcquisitionBase = object  # type: ignore[assignment, misc]
+    _contract = None  # type: ignore[assignment]
+    _errors = None  # type: ignore[assignment]
     _DatasetBase = object  # type: ignore[assignment, misc]
     HAVE_SYMFLUENCE = False
+
+
+#: Semver of the SYMFLUENCE AcquisitionBackend protocol this backend targets.
+#: Deliberately hardcoded (not read from the installed framework) so that a
+#: contract bump on the SYMFLUENCE side is *detected* as skew by the selection
+#: layer instead of silently claimed compatible.
+TARGET_INTERFACE_VERSION = "0.1.0"
 
 
 #: CFS canonical-v1 variable names -> SYMFLUENCE CFIF names.
@@ -96,43 +94,21 @@ CFS_TO_CFIF_MAPPING: dict[str, str] = {
     "surface_downwelling_longwave_flux": "surface_downwelling_longwave_flux",
 }
 
-
-# ── The shadow map ───────────────────────────────────────────────────
-
-
-class ShadowSpec(NamedTuple):
-    """One parity-validated native dataset shadowed by a CFS backend.
-
-    Attributes:
-        family: Human-readable dataset family name (used in logs/errors and
-            to derive shadow class names).
-        aliases: Every name the native acquisition handler registers under in
-            ``R.acquisition_handlers`` — the wrapper shadows all of them.
-        dataset_keys: The ``R.dataset_handlers`` keys to shadow with the
-            self-detecting preprocessing handler.
-        product: Fixed CFS product id for the community fetch, or ``None``
-            for NEX-GDDP where the product is built per scenario
-            (``nex_gddp:<scenario>``) from the native config keys.
-        variables_key: Flat config key holding the native variable list
-            (``None`` → always fetch all canonical variables the product
-            offers).
-        native_to_canonical: Native variable name → canonical-v1 name map
-            used to translate ``variables_key`` requests.
-        parity: Live-measured parity grade vs the native pipeline
-            (2026-06-11 experiments; see docs/symfluence.md).
-    """
-
-    family: str
-    aliases: tuple[str, ...]
-    dataset_keys: tuple[str, ...]
-    product: str | None
-    variables_key: str | None
-    native_to_canonical: dict[str, str] | None
-    parity: str
-
+#: The eight standard CFIF grid-forcing variables.
+_STANDARD_8 = frozenset({
+    "air_temperature",
+    "precipitation_flux",
+    "specific_humidity",
+    "surface_air_pressure",
+    "surface_downwelling_shortwave_flux",
+    "surface_downwelling_longwave_flux",
+    "eastward_wind",
+    "northward_wind",
+})
 
 #: NLDAS-2 v2.0 NetCDF (ALMA) names -> canonical-v1, mirroring the CFS
-#: ``nldas`` connector's source mapping (connectors/nldas.py).
+#: ``nldas`` connector's source mapping (connectors/nldas.py). Kept so the
+#: legacy ``NLDAS_VARIABLES`` config key (native names) keeps working.
 _NLDAS_TO_CANONICAL: dict[str, str] = {
     "Tair": "air_temperature",
     "Qair": "specific_humidity",
@@ -156,115 +132,197 @@ _NEX_TO_CANONICAL: dict[str, str] = {
     "rlds": "surface_downwelling_longwave_flux",
 }
 
-#: Parity-gated shadow map: ONLY datasets whose native-vs-community output was
-#: live-validated (2026-06-11) are shadowed. MSWEP and EM-EARTH are
-#: deliberately EXCLUDED until live parity validation is possible (blocked:
-#: no rclone Drive remote / the EM-Earth S3 bucket denies anonymous GET) —
-#: their native handlers keep running untouched under every DATA_ACCESS value.
-#: Projected/curvilinear-grid datasets (CARRA, CERRA, RDRS, CONUS404, HRRR,
-#: DAYMET, NWM3_RETROSPECTIVE, CASR) are likewise not shadowed in v1.
-SHADOW_SPECS: tuple[ShadowSpec, ...] = (
-    ShadowSpec(
+
+# ── The capability map ───────────────────────────────────────────────
+
+
+class DatasetSpec(NamedTuple):
+    """One dataset the community backend can serve.
+
+    Attributes:
+        family: Human-readable dataset family name (logs/errors/dispatch).
+        dataset_ids: Every framework name this dataset is requestable under —
+            each gets its own :class:`DatasetCapability` entry.
+        product: Fixed CFS product id, or ``None`` for NEX-GDDP (built per
+            scenario from the native config keys) and for the parallel-name
+            ``CFS`` entry (product comes from ``options['product']`` /
+            ``CFS_PRODUCT``).
+        grid: ``"regular_latlon"`` or ``"projected"`` (contract GridClass value).
+        variables: CFIF names servable (capability declaration).
+        fetchable: Canonical names the CFS product actually offers; requested
+            variables outside this set are satisfied by derivation
+            (``wind_speed``, ERA5 ``specific_humidity``) or dropped loudly.
+        auth: Auth-provider ids required (contract vocabulary).
+        temporal: Declared coverage ``[start, end)`` or ``None``.
+        parity: Parity grade vs the native pipeline (``None`` = ungated; the
+            framework refuses ungated datasets unless ALLOW_UNGATED_BACKENDS).
+        variables_key: Legacy flat config key holding a native variable list.
+        native_to_canonical: Native variable name -> canonical-v1 map for
+            translating ``variables_key`` entries.
+        notes: Capability notes (shown to users by tooling).
+    """
+
+    family: str
+    dataset_ids: tuple[str, ...]
+    product: str | None
+    grid: str
+    variables: frozenset[str]
+    fetchable: frozenset[str]
+    auth: frozenset[str]
+    temporal: tuple[str, str] | None
+    parity: str | None
+    variables_key: str | None
+    native_to_canonical: dict[str, str] | None
+    notes: str
+
+
+#: Parity-gated dataset map: ONLY datasets whose native-vs-community output
+#: was live-validated are graded (2026-06-11/12 experiments; see
+#: docs/symfluence.md). MSWEP and EM-EARTH remain deliberately ABSENT until
+#: live parity validation is possible (blocked: no rclone Drive remote / the
+#: EM-Earth S3 bucket denies anonymous GET) — their native handlers keep
+#: running untouched under every DATA_ACCESS value. The parallel-name ``CFS``
+#: entry is intentionally ungraded (``parity=None``) and exercises the
+#: framework's ungated-backend policy.
+DATASET_SPECS: tuple[DatasetSpec, ...] = (
+    DatasetSpec(
         family="ERA5",
-        aliases=("ERA5",),
-        dataset_keys=("era5",),  # 'era5_cds' stays native (separate CDS-raw layout)
+        dataset_ids=("ERA5",),
         product="era5_arco:single_levels",
+        grid="regular_latlon",
+        variables=_STANDARD_8 | {"wind_speed"},
+        fetchable=frozenset({
+            "air_temperature", "dewpoint_temperature", "surface_air_pressure",
+            "eastward_wind", "northward_wind", "precipitation_flux",
+            "surface_downwelling_shortwave_flux", "surface_downwelling_longwave_flux",
+        }),
+        auth=frozenset(),
+        temporal=None,
+        parity="value-identical:2ulp",
         variables_key=None,
         native_to_canonical=None,
-        parity="value-identical; 3 accumulation->flux vars differ <= 2 float32 ulps (op-order only)",
+        notes=(
+            "ARCO ERA5 (anonymous GCS Zarr). The 3 accumulation->flux variables "
+            "differ <= 2 float32 ulps from native (operation order only); "
+            "wind_speed / specific_humidity are derived with the native float32 "
+            "op order (bitwise equal). The CDS pathway (ERA5_CDS) stays native."
+        ),
     ),
-    ShadowSpec(
+    DatasetSpec(
         family="NLDAS",
-        aliases=("NLDAS", "NLDAS2", "NLDAS-2"),
-        # SYMFLUENCE has NO native NLDAS dataset handler (only a variable
-        # rename map in data/utils/variable_utils.py), so these keys are
-        # registered outright for community-acquired canonical files only.
-        dataset_keys=("nldas", "nldas2", "nldas-2"),
+        dataset_ids=("NLDAS", "NLDAS2", "NLDAS-2"),
         product="nldas:fora0125_h",
+        grid="regular_latlon",
+        variables=_STANDARD_8,
+        fetchable=_STANDARD_8,
+        auth=frozenset({"earthdata"}),
+        temporal=None,
+        parity="value-identical:1ulp",
         variables_key="NLDAS_VARIABLES",
         native_to_canonical=_NLDAS_TO_CANONICAL,
-        parity="bitwise-identical (7/8 vars); precip <= 1 float32 ulp",
+        notes="NLDAS-2 v2.0 hourly forcing; 7/8 variables bitwise, precip <= 1 float32 ulp.",
     ),
-    ShadowSpec(
+    DatasetSpec(
         family="AORC",
-        aliases=("AORC",),
-        dataset_keys=("aorc",),
+        dataset_ids=("AORC",),
         product="aorc:conus_1km",
+        grid="regular_latlon",
+        variables=_STANDARD_8,
+        fetchable=_STANDARD_8,
+        auth=frozenset(),
+        temporal=("2002-02-01", "2100-01-01"),
+        parity="bit-identical",
         variables_key=None,
         native_to_canonical=None,
-        parity="bit-identical",
+        notes=(
+            "AORC 1 km CONUS Zarr (anonymous S3). Pre-2002 windows are DECLINED "
+            "(coverage start 2002-02): SYMFLUENCE's native NWM-projected fallback "
+            "serves those. Upper coverage bound is nominal (archive grows)."
+        ),
     ),
-    ShadowSpec(
+    DatasetSpec(
         family="NEX-GDDP",
-        aliases=("NEX-GDDP-CMIP6", "NEX-GDDP"),
-        dataset_keys=("nex-gddp-cmip6", "nex-gddp"),
+        dataset_ids=("NEX-GDDP-CMIP6", "NEX-GDDP"),
         product=None,  # nex_gddp:<scenario>, built from NEX_* config keys
+        grid="regular_latlon",
+        variables=frozenset({
+            "air_temperature", "precipitation_flux", "specific_humidity",
+            "wind_speed", "surface_downwelling_shortwave_flux",
+            "surface_downwelling_longwave_flux", "surface_air_pressure",
+        }),
+        fetchable=frozenset({
+            "air_temperature", "precipitation_flux", "specific_humidity",
+            "wind_speed", "surface_downwelling_shortwave_flux",
+            "surface_downwelling_longwave_flux",
+        }),
+        auth=frozenset(),
+        temporal=None,
+        parity="bit-identical",
         variables_key="NEX_VARIABLES",
         native_to_canonical=_NEX_TO_CANONICAL,
-        parity="bit-identical (same physical files; NCCS THREDDS vs S3 mirror)",
+        notes=(
+            "Daily downscaled CMIP6 (same physical files as native: NCCS THREDDS "
+            "vs S3 mirror). Driven by NEX_MODELS/NEX_SCENARIOS/NEX_ENSEMBLES; "
+            "surface pressure is synthesized exactly like the native handler."
+        ),
+    ),
+    DatasetSpec(
+        family="RDRS",
+        dataset_ids=("RDRS", "RDRS_v3.1"),
+        product="rdrs:casr_v32",
+        grid="projected",
+        variables=_STANDARD_8 | {"wind_speed"},
+        fetchable=_STANDARD_8 | {"dewpoint_temperature"},
+        auth=frozenset(),
+        temporal=("1980-01-01", "2025-01-01"),
+        parity="bit-identical",
+        variables_key=None,
+        native_to_canonical=None,
+        notes=(
+            "CaSR v3.2 rotated-pole (~10 km hourly) via PAVICS OPeNDAP — the same "
+            "store the native handler reads (exp10: all 9 variables + rlat/rlon/"
+            "2-D lat/lon + time bitwise identical). wind_speed is derived as "
+            "hypot(u, v) during preprocessing; it deviates <= 9e-4 m/s from "
+            "CaSR's own sfcWind diagnostic (physically negligible, documented)."
+        ),
+    ),
+    DatasetSpec(
+        family="CFS",
+        dataset_ids=("CFS",),
+        product=None,  # from options={'product': ...} or the CFS_PRODUCT key
+        grid="regular_latlon",
+        variables=_STANDARD_8 | {"wind_speed"},
+        fetchable=frozenset(),  # unknown until the product is named
+        auth=frozenset(),
+        temporal=None,
+        parity=None,  # UNGATED by design: any CFS product, no parity claim
+        variables_key="CFS_VARIABLES",
+        native_to_canonical=None,
+        notes=(
+            "Parallel-name access to the whole CFS catalog: pass the product as "
+            "options={'product': 'provider:product'} or set the CFS_PRODUCT key "
+            "(optional CFS_VARIABLES / CFS_CONNECTOR_CONFIG). Grid class varies "
+            "by product. Ungraded (parity_grade None): the framework refuses it "
+            "unless ALLOW_UNGATED_BACKENDS is true."
+        ),
     ),
 )
 
 
-def _backend_keys(spec: ShadowSpec) -> tuple[str, ...]:
-    """Flat per-dataset opt-out keys, one per registry alias.
-
-    ``ERA5`` → ``('ERA5_BACKEND',)``; ``NLDAS``/``NLDAS2``/``NLDAS-2`` →
-    ``('NLDAS_BACKEND', 'NLDAS2_BACKEND', 'NLDAS_2_BACKEND')``.
-    """
-    keys: list[str] = []
-    for alias in spec.aliases:
-        key = re.sub(r"[^A-Za-z0-9]+", "_", alias).strip("_").upper() + "_BACKEND"
-        if key not in keys:
-            keys.append(key)
-    return tuple(keys)
+def _spec_for(dataset_id: str) -> DatasetSpec | None:
+    wanted = dataset_id.lower()
+    for spec in DATASET_SPECS:
+        if any(wanted == did.lower() for did in spec.dataset_ids):
+            return spec
+    return None
 
 
 # ── Shared helpers ───────────────────────────────────────────────────
 
 
 def _netcdf_encoding(ds: xr.Dataset) -> dict[str, dict[str, Any]]:
-    """Compressed per-variable encoding for ``ds.to_netcdf(encoding=...)``.
-
-    Mirrors SYMFLUENCE's ``ChunkedDownloadMixin.get_netcdf_encoding`` defaults
-    (zlib, complevel 1) without requiring the mixin, so the acquirer keeps a
-    single defensive base class.
-    """
+    """Compressed per-variable encoding for ``ds.to_netcdf(encoding=...)``."""
     return {str(name): {"zlib": True, "complevel": 1} for name in ds.data_vars}
-
-
-def _require_regular_grid(ds: xr.Dataset) -> None:
-    """Raise for projected/curvilinear canonical datasets (unsupported in v1).
-
-    Per the canonical-v1 spec, regular grids carry 1-D ``latitude`` /
-    ``longitude`` *dimension* coordinates; projected products (rotated-pole or
-    LCC: rdrs, conus404, hrrr, daymet, narr, aorc_nwm, nwm_operational) keep
-    native ``rlat``/``rlon`` or ``y``/``x`` dims with 2-D lat/lon auxiliaries.
-    """
-    if "latitude" in ds.dims and "longitude" in ds.dims:
-        return
-    raise NotImplementedError(
-        "The CFS dataset handler supports regular latitude/longitude grids only (v1). "
-        f"This dataset has dims {tuple(ds.dims)}, i.e. a projected/curvilinear product "
-        "(native rlat/rlon or y/x dims with 2-D latitude/longitude coordinates per "
-        "canonical-v1). Pick a regular-grid CFS product (see the CFS catalog 'grid' "
-        "column) or open an issue if you need projected-grid support."
-    )
-
-
-def _bbox_tuple(handler: Any) -> tuple[float, float, float, float]:
-    """SYMFLUENCE bbox dict -> CFS ``(min_lon, min_lat, max_lon, max_lat)``."""
-    if not handler.bbox:
-        raise ValueError(
-            "No bounding box available for the CFS acquisition handler. "
-            "Set BOUNDING_BOX_COORDS ('north/west/south/east') in your configuration."
-        )
-    return (
-        float(handler.bbox["lon_min"]),
-        float(handler.bbox["lat_min"]),
-        float(handler.bbox["lon_max"]),
-        float(handler.bbox["lat_max"]),
-    )
 
 
 def _product_tag(product: str) -> str:
@@ -272,28 +330,46 @@ def _product_tag(product: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", product).strip("_").lower()
 
 
-def _community_output_path(handler: Any, output_dir: Path, tag: str) -> Path:
-    """Canonical output filename: ``domain_{name}_cfs_{tag}_{start}_{end}.nc``."""
-    start_str = handler.start_date.strftime("%Y%m%d")
-    end_str = handler.end_date.strftime("%Y%m%d")
-    return Path(output_dir) / f"domain_{handler.domain_name}_cfs_{tag}_{start_str}_{end_str}.nc"
+def _cfg(config: Any, key: str, default: Any = None) -> Any:
+    """Flat config read working for dicts and SymfluenceConfig-like objects."""
+    if config is None:
+        return default
+    getter = getattr(config, "get", None)
+    if callable(getter):
+        value = getter(key, default)
+        return default if value is None else value
+    return default
 
 
-def _canonical_to_cfif(handler: Any, ds: xr.Dataset) -> xr.Dataset:
-    """Rename a canonical-v1 dataset to CFIF and apply standard attributes.
+def _as_list(value: Any) -> list[str] | None:
+    """Coerce a config value (comma-string or list) into a list of names."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items = [v.strip() for v in value.split(",") if v.strip()]
+        return items or None
+    return [str(v) for v in value] or None
 
-    Data arrive in canonical SI units identical to CFIF's (K, kg m-2 s-1,
-    W m-2, Pa, m s-1), so no unit conversion is performed. Shared by
-    :class:`CFSDatasetHandler` and the self-detecting shadow handlers (which
-    must not consult their verdict-dependent ``get_variable_mapping``).
+
+def _derive_wind_speed(ds: xr.Dataset) -> xr.Dataset:
+    """Derive ``wind_speed`` from the wind primitives when absent.
+
+    Uses the same float32 op order as SYMFLUENCE's native ERA5 derivation:
+    ``((u**2 + v**2) ** 0.5).astype(float32)``. For RDRS/CaSR this composite
+    deviates <= 9e-4 m/s (max, exp10 measurement: 8.8e-4) from CaSR's own
+    ``sfcWind`` diagnostic — CaSR computes its wind speed upstream with
+    different physics-level rounding. Physically negligible; documented here
+    and in docs/symfluence.md rather than chased.
     """
-    _require_regular_grid(ds)
-    renames = {
-        old: new for old, new in CFS_TO_CFIF_MAPPING.items() if old in ds.variables and new != old
-    }
-    if renames:  # pragma: no cover - identity mapping today; future-proofing
-        ds = ds.rename(renames)
-    return cast("xr.Dataset", handler.apply_standard_attributes(ds))
+    if "wind_speed" in ds.data_vars or not (
+        {"eastward_wind", "northward_wind"} <= set(ds.data_vars)
+    ):
+        return ds
+    u, v = ds["eastward_wind"], ds["northward_wind"]
+    wind = ((u**2 + v**2) ** 0.5).astype("float32")
+    wind.attrs = {"units": "m s-1", "long_name": "wind speed", "standard_name": "wind_speed"}
+    ds["wind_speed"] = wind
+    return ds
 
 
 def _add_native_era5_derivations(ds: xr.Dataset) -> xr.Dataset:
@@ -302,7 +378,7 @@ def _add_native_era5_derivations(ds: xr.Dataset) -> xr.Dataset:
     The native ERA5 acquisition pipeline (``handlers/era5_processing.py``)
     ships these two derived variables in its raw files; CFS's ``era5_arco``
     product ships only the primitives (u/v wind, dewpoint, pressure). To keep
-    the community files drop-in equivalent, the shadow recomputes them with
+    the community files drop-in equivalent, the backend recomputes them with
     the **same float32 op order as SYMFLUENCE** — live-verified bitwise equal
     to the native output (2026-06-11 parity experiments). Do not "improve"
     these formulas: bit-parity with the native pipeline is the contract.
@@ -310,11 +386,7 @@ def _add_native_era5_derivations(ds: xr.Dataset) -> xr.Dataset:
     import numpy as np
     import xarray
 
-    if "wind_speed" not in ds.data_vars and {"eastward_wind", "northward_wind"} <= set(ds.data_vars):
-        u, v = ds["eastward_wind"], ds["northward_wind"]
-        wind = ((u**2 + v**2) ** 0.5).astype("float32")
-        wind.attrs = {"units": "m s-1", "long_name": "wind speed", "standard_name": "wind_speed"}
-        ds["wind_speed"] = wind
+    ds = _derive_wind_speed(ds)
     if "specific_humidity" not in ds.data_vars and {
         "dewpoint_temperature",
         "surface_air_pressure",
@@ -330,269 +402,143 @@ def _add_native_era5_derivations(ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
-# ── Parallel-name mode (FORCING_DATASET: CFS) ────────────────────────
+# ── The community acquisition backend ────────────────────────────────
 
 
-class CFSForcingAcquirer(_AcquisitionBase):
-    """SYMFLUENCE acquisition handler that downloads forcing via CFS.
+class CommunityForcingBackend:
+    """CFS as a SYMFLUENCE ``AcquisitionBackend`` (the ``community`` backend).
 
-    Selected with ``FORCING_DATASET: CFS``. Configuration keys (flat / YAML):
-
-    ``CFS_PRODUCT`` (required)
-        CFS product id ``"provider:product"`` (e.g. ``"aorc:aorc.v1.1"``,
-        ``"era5_arco:single_levels"``) or a bare provider slug when the
-        provider offers exactly one product (e.g. ``"aorc"``).
-    ``CFS_VARIABLES`` (optional)
-        Comma-separated canonical variable names (see
-        ``cfs.core.vocabulary.CanonicalVar``). Default: all the product offers.
-    ``CFS_CONNECTOR_CONFIG`` (optional)
-        Provider-specific connector configuration dict
-        (e.g. ``{"members": ["gec00"]}`` for GEFS).
-
-    The bounding box and time range come from the standard SYMFLUENCE domain
-    config (``BOUNDING_BOX_COORDS``, ``EXPERIMENT_TIME_START/END``). The
-    canonical dataset returned by CFS is dask-lazy; it is streamed straight to
-    a compressed NetCDF in ``output_dir``.
+    Instantiated by the framework's selection layer with ``(config, logger)``,
+    exactly like the in-tree ``NativeBackend``. ``capabilities()`` is static
+    (the parity-gated :data:`DATASET_SPECS` table); ``acquire()`` translates
+    the protocol request into :func:`cfs.fetch_sync` calls, writes canonical-v1
+    NetCDF plus the sidecar acquisition manifest into ``request.target_dir``,
+    and maps CFS-internal failures onto the protocol error taxonomy.
     """
 
-    def download(self, output_dir: Path) -> Path:
-        """Fetch the configured CFS product and write it as one NetCDF file."""
-        import cfs
+    name = "community"
+    interface_version = TARGET_INTERFACE_VERSION
 
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, config: Any = None, logger: Any = None) -> None:
+        self.config = config
+        self.logger = logger or _fallback_logger()
 
-        cfs.discover()
-        providers = cfs.list_providers()
+    # -- protocol surface --------------------------------------------------
 
-        product = self._get_config_value(lambda: None, default=None, dict_key="CFS_PRODUCT")
-        if not product:
-            raise ValueError(
-                "CFS_PRODUCT is required when FORCING_DATASET is 'CFS'. Set it to a CFS "
-                "product id ('provider:product', e.g. 'aorc:aorc.v1.1' or "
-                "'era5_arco:single_levels') or a bare provider slug. "
-                f"Available CFS providers: {', '.join(providers)}"
+    def capabilities(self) -> tuple[Any, ...]:
+        """One :class:`DatasetCapability` per requestable dataset id."""
+        contract = _require_contract()
+        caps = []
+        for spec in DATASET_SPECS:
+            for dataset_id in spec.dataset_ids:
+                caps.append(contract.DatasetCapability(
+                    dataset_id=dataset_id,
+                    grid_class=contract.GridClass(spec.grid),
+                    schema=contract.SchemaId.CANONICAL_V1,
+                    variables=spec.variables,
+                    temporal=spec.temporal,
+                    auth=spec.auth,
+                    parity_grade=spec.parity,
+                    notes=spec.notes,
+                ))
+        return tuple(caps)
+
+    def acquire(self, request: Any) -> Any:
+        """Serve an :class:`AcquisitionRequest` via :func:`cfs.fetch_sync`."""
+        contract = _require_contract()
+        spec = _spec_for(request.dataset_id)
+        if spec is None:
+            raise _errors.DatasetUnsupported(
+                f"The community backend does not serve dataset '{request.dataset_id}' "
+                f"(served: {sorted(did for s in DATASET_SPECS for did in s.dataset_ids)})",
+                dataset_id=request.dataset_id,
+                backend=self.name,
             )
-        product = str(product)
-        slug = product.split(":", 1)[0]
-        if slug not in providers:
-            raise ValueError(
-                f"Unknown CFS product '{product}': no CFS provider '{slug}'. "
-                f"Available CFS providers: {', '.join(providers)}"
-            )
 
-        variables_cfg = self._get_config_value(lambda: None, default=None, dict_key="CFS_VARIABLES")
-        if isinstance(variables_cfg, str):
-            variables = [v.strip() for v in variables_cfg.split(",") if v.strip()] or None
+        target_dir = Path(request.target_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        window = self._window(request, spec)
+        bbox = self._bbox(request)
+
+        if spec.family == "NEX-GDDP":
+            paths, delivered, warnings, provenance = self._acquire_nex(request, spec, target_dir, window, bbox)
         else:
-            variables = variables_cfg  # None, or already a list from YAML
-        connector_config = self._get_config_value(
-            lambda: None, default=None, dict_key="CFS_CONNECTOR_CONFIG"
-        )
-
-        out_path = _community_output_path(self, output_dir, _product_tag(product))
-        if self._skip_if_exists(out_path):
-            return out_path
-
-        bbox = _bbox_tuple(self)
-        self.logger.info(
-            f"Acquiring CFS product '{product}' for bbox {bbox}, "
-            f"{self.start_date} to {self.end_date}"
-            + (f", variables: {variables}" if variables else "")
-        )
-
-        ds, result = cfs.fetch_sync(
-            product,
-            bbox=bbox,
-            time_range=(self.start_date.to_pydatetime(), self.end_date.to_pydatetime()),
-            variables=variables,
-            config=connector_config,
-        )
-        for warning in result.warnings:
-            self.logger.warning(f"CFS QC: {warning}")
-
-        # The canonical dataset is dask-lazy; to_netcdf streams it to disk
-        # without materializing the full cube in memory.
-        ds.to_netcdf(out_path, encoding=_netcdf_encoding(ds))
-        ds.close()
-
-        self.logger.info(
-            f"CFS acquisition complete: {out_path} "
-            f"({result.n_times} timesteps, {result.n_lat}x{result.n_lon} cells)"
-        )
-        return out_path
-
-
-# ── Shadow acquisition wrappers (drop-in mode) ───────────────────────
-
-
-class _ShadowAcquirerBase(_AcquisitionBase):
-    """Backend-routing wrapper registered under a native forcing dataset name.
-
-    Subclasses are generated per :class:`ShadowSpec` at :func:`register` time
-    (the captured native class only exists then). Constructor signature is the
-    native one — ``(config, logger, reporting_manager=None)`` — so SYMFLUENCE's
-    ``AcquisitionRegistry.get_handler`` instantiates it unchanged.
-    """
-
-    #: Marker so register() never captures a shadow as "the native class".
-    _cfs_shadow = True
-    _spec: ShadowSpec
-    #: The native SYMFLUENCE handler class captured at register() time.
-    _native_cls: Any = None
-
-    # -- backend routing -------------------------------------------------
-
-    def _resolve_backend(self) -> str:
-        """``<NAME>_BACKEND`` flat key overrides the global ``DATA_ACCESS`` gate."""
-        for key in _backend_keys(self._spec):
-            value = self._get_config_value(lambda: None, default=None, dict_key=key)
-            if value:
-                return str(value).strip().lower()
-        data_access = self._get_config_value(
-            lambda: self.config.domain.data_access, default="MAF", dict_key="DATA_ACCESS"
-        )
-        return "community" if str(data_access or "MAF").strip().lower() == "community" else "native"
-
-    def download(self, output_dir: Path) -> Path:
-        backend = self._resolve_backend()
-        if backend != "community":
-            return self._native_download(output_dir)
-        if self._spec.product is None:
-            return self._nex_community_download(output_dir)
-        return self._community_download(output_dir)
-
-    # -- native delegation (the bit-identical default) ---------------------
-
-    def _native_download(self, output_dir: Path) -> Path:
-        """Run exactly the captured native handler — bit-identical guarantee."""
-        if self._native_cls is None:
-            raise RuntimeError(
-                f"No native SYMFLUENCE acquisition handler was captured for "
-                f"'{self._spec.family}' when the CFS plugin registered, so the native "
-                f"backend is unavailable. Set DATA_ACCESS: community (or "
-                f"{_backend_keys(self._spec)[0]}: community) to acquire via CFS, or "
-                "fix the SYMFLUENCE installation so its in-tree handler registers."
+            paths, delivered, warnings, provenance = self._acquire_product(
+                request, spec, target_dir, window, bbox
             )
-        native = self._native_cls(self.config, self.logger, getattr(self, "reporting_manager", None))
-        self.logger.info(f"{self._spec.family}: delegating to native SYMFLUENCE handler (backend != community)")
-        return cast(Path, native.download(Path(output_dir)))
 
-    # -- community acquisition --------------------------------------------
+        result = contract.AcquisitionResult(
+            paths=tuple(paths),
+            schema=contract.SchemaId.CANONICAL_V1,
+            dataset_id=request.dataset_id,
+            backend=self.name,
+            provenance=provenance,
+            variables_delivered=frozenset(delivered),
+            warnings=tuple(warnings),
+        )
+        contract.write_manifest(result, target_dir)
+        return result
 
-    def _community_variables(self) -> list[str] | None:
-        """Canonical equivalents of the natively-configured variable list.
+    # -- single-product acquisition ----------------------------------------
 
-        ``None`` (no per-dataset variable key, or key unset) means "all the
-        canonical variables the CFS product offers".
-        """
-        spec = self._spec
-        if spec.variables_key is None or spec.native_to_canonical is None:
-            return None
-        requested = self._get_config_value(lambda: None, default=None, dict_key=spec.variables_key)
-        if not requested:
-            return None
-        if isinstance(requested, str):
-            requested = [v.strip() for v in requested.split(",") if v.strip()]
-        canonical_names = set(CFS_TO_CFIF_MAPPING) | {"dewpoint_temperature"}
-        canonical: list[str] = []
-        unmapped: list[str] = []
-        for name in requested:
-            target = spec.native_to_canonical.get(str(name))
-            if target is None and str(name) in canonical_names:
-                target = str(name)  # already a canonical-v1 name
-            if target is None:
-                unmapped.append(str(name))
-            elif target not in canonical:
-                canonical.append(target)
-        if unmapped:
-            # Loud, not silent: a model fed a subset of its forcing variables
-            # produces garbage downstream.
-            self.logger.warning(
-                f"{spec.family}: requested {spec.variables_key} variable(s) with no "
-                f"canonical-v1 counterpart are NOT included in the community fetch: "
-                f"{', '.join(unmapped)}. Set {_backend_keys(spec)[0]}: native if you need them."
+    def _acquire_product(self, request, spec, target_dir, window, bbox):
+        product, connector_config = self._resolve_product(request, spec)
+        variables = self._fetch_variables(request, spec)
+        out_path = target_dir / self._output_name(product, window)
+
+        if out_path.exists() and not self._force_download():
+            self.logger.info(
+                f"{spec.family}: output already exists, skipping fetch: {out_path.name}"
             )
-        if not canonical:
-            raise ValueError(
-                f"{spec.family}: none of the requested {spec.variables_key} variables "
-                f"({', '.join(map(str, requested))}) map to canonical-v1 names; cannot "
-                "fetch via the community backend."
-            )
-        return canonical
+            delivered = sorted(self._delivered_from_file(out_path))
+            provenance = self._provenance(product, "reused existing output (skip-if-exists)")
+            return [out_path], delivered, [], provenance
 
-    def _community_download(self, output_dir: Path) -> Path:
-        """Fixed-product community fetch (ERA5 / NLDAS / AORC)."""
-        import cfs
-
-        product = cast(str, self._spec.product)
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = _community_output_path(self, output_dir, _product_tag(product))
-        if self._skip_if_exists(out_path):
-            return out_path
-
-        variables = self._community_variables()
-        bbox = _bbox_tuple(self)
         self.logger.info(
-            f"{self._spec.family}: acquiring via CFS community backend "
-            f"(product '{product}', bbox {bbox}, {self.start_date} to {self.end_date})"
+            f"{spec.family}: acquiring via CFS (product '{product}', bbox {bbox}, "
+            f"{window[0]} to {window[1]})" + (f", variables: {variables}" if variables else "")
         )
-        ds, result = cfs.fetch_sync(
-            product,
-            bbox=bbox,
-            time_range=(self.start_date.to_pydatetime(), self.end_date.to_pydatetime()),
-            variables=variables,
+        ds, fetch_result = self._fetch(
+            spec, product, bbox, window, variables, config=connector_config
         )
-        for warning in result.warnings:
-            self.logger.warning(f"CFS QC: {warning}")
-
-        if self._spec.family == "ERA5":
+        if spec.family == "ERA5":
             ds = _add_native_era5_derivations(ds)
 
-        # Keep the canonical-v1 attrs intact: the global `cfs_schema` attr is
-        # how the dataset-handler shadows detect community-acquired files.
         ds.to_netcdf(out_path, encoding=_netcdf_encoding(ds))
+        delivered = sorted(str(name) for name in ds.data_vars)
         ds.close()
+
         self.logger.info(
-            f"{self._spec.family} community acquisition complete: {out_path} "
-            f"({result.n_times} timesteps, {result.n_lat}x{result.n_lon} cells)"
+            f"{spec.family} community acquisition complete: {out_path.name} "
+            f"({fetch_result.n_times} timesteps, {fetch_result.n_lat}x{fetch_result.n_lon} cells)"
         )
-        return out_path
+        provenance = self._provenance(product, fetch_result.provenance, fetch_result)
+        return [out_path], delivered, list(fetch_result.warnings), provenance
 
-    def _nex_community_download(self, output_dir: Path) -> Path:
-        """NEX-GDDP community fetch: product + config from the native NEX_* keys.
+    # -- NEX-GDDP (product built per scenario from the native config keys) ---
 
-        Reads the same keys as the native handler (``handlers/nex_gddp.py``):
-        ``NEX_MODELS`` (required), ``NEX_SCENARIOS`` (default ['historical']),
-        ``NEX_ENSEMBLES`` (default ['r1i1p1f1']), ``NEX_VARIABLES`` (default:
-        the native list; canonical-mappable subset is fetched). One canonical
-        NetCDF per model x scenario x member combination.
-        """
-        import cfs
+    def _acquire_nex(self, request, spec, target_dir, window, bbox):
+        """One canonical NetCDF per model x scenario x member combination."""
         from cfs.connectors.nex_gddp import SCENARIOS
 
-        models = self._get_config_value(lambda: self.config.forcing.nex.models, dict_key="NEX_MODELS")
+        options = dict(request.options or {})
+        models = _as_list(options.get("models") or _cfg(self.config, "NEX_MODELS"))
         if not models:
-            raise ValueError("NEX_MODELS must be set.")
-        scenarios = self._get_config_value(
-            lambda: self.config.forcing.nex.scenarios, default=["historical"], dict_key="NEX_SCENARIOS"
-        )
-        members = self._get_config_value(
-            lambda: self.config.forcing.nex.ensembles, default=["r1i1p1f1"], dict_key="NEX_ENSEMBLES"
-        )
-        models = [models] if isinstance(models, str) else list(models)
-        scenarios = [scenarios] if isinstance(scenarios, str) else list(scenarios)
-        members = [members] if isinstance(members, str) else list(members)
+            raise _errors.AcquisitionError(
+                "NEX-GDDP (community backend): NEX_MODELS must be set "
+                "(or pass options={'models': [...]})."
+            )
+        scenarios = _as_list(options.get("scenarios") or _cfg(self.config, "NEX_SCENARIOS")) or ["historical"]
+        members = _as_list(options.get("members") or _cfg(self.config, "NEX_ENSEMBLES")) or ["r1i1p1f1"]
+        variables = self._fetch_variables(request, spec)
 
-        variables = self._community_variables()
-        bbox = _bbox_tuple(self)
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        start = self.start_date.to_pydatetime()
-        end = self.end_date.to_pydatetime()
+        start, end = window
+        paths: list[Path] = []
+        delivered: set[str] = set()
+        warnings: list[str] = []
+        provenance: dict[str, str] = {}
 
-        written: list[Path] = []
         for model in models:
             for scenario in scenarios:
                 extent = SCENARIOS.get(str(scenario))
@@ -607,36 +553,38 @@ class _ShadowAcquirerBase(_AcquisitionBase):
                     )
                     continue
                 for member in members:
+                    product = f"nex_gddp:{scenario}"
                     tag = _product_tag(f"nex_gddp_{scenario}_{model}_{member}")
-                    out_path = _community_output_path(self, output_dir, tag)
-                    if self._skip_if_exists(out_path):
-                        written.append(out_path)
+                    out_path = target_dir / self._output_name(tag, (window_start, window_end), tagged=True)
+                    if out_path.exists() and not self._force_download():
+                        paths.append(out_path)
+                        delivered |= self._delivered_from_file(out_path)
                         continue
                     self.logger.info(
-                        f"NEX-GDDP: acquiring via CFS community backend "
-                        f"(nex_gddp:{scenario}, model={model}, member={member})"
+                        f"NEX-GDDP: acquiring via CFS ({product}, model={model}, member={member})"
                     )
-                    ds, result = cfs.fetch_sync(
-                        f"nex_gddp:{scenario}",
-                        bbox=bbox,
-                        time_range=(window_start, window_end),
-                        variables=variables,
+                    ds, fetch_result = self._fetch(
+                        spec, product, bbox, (window_start, window_end), variables,
                         config={"model": str(model), "member": str(member)},
                     )
-                    for warning in result.warnings:
-                        self.logger.warning(f"CFS QC: {warning}")
                     ds = self._nex_add_synthetic_pressure(ds)
                     ds.to_netcdf(out_path, encoding=_netcdf_encoding(ds))
+                    delivered |= {str(name) for name in ds.data_vars}
                     ds.close()
-                    written.append(out_path)
+                    paths.append(out_path)
+                    warnings.extend(fetch_result.warnings)
+                    provenance.setdefault("provider", fetch_result.provider)
+                    provenance[f"{tag}"] = fetch_result.provenance or product
 
-        if not written:
-            raise RuntimeError(
-                "NEX-GDDP-CMIP6 (community backend): no data written — every "
-                "model/scenario combination fell outside its scenario extent."
+        if not paths:
+            raise _errors.WindowOutOfRange(
+                "NEX-GDDP-CMIP6 (community backend): no data acquired — every "
+                "model/scenario combination fell outside its scenario extent.",
             )
-        self.logger.info(f"NEX-GDDP community acquisition complete: {len(written)} file(s) in {output_dir}")
-        return output_dir
+        provenance.setdefault("acquired_at", datetime.now(UTC).isoformat())
+        provenance.setdefault("backend", "cfs")
+        self.logger.info(f"NEX-GDDP community acquisition complete: {len(paths)} file(s)")
+        return paths, sorted(delivered), warnings, provenance
 
     def _nex_add_synthetic_pressure(self, ds: xr.Dataset) -> xr.Dataset:
         """Fabricate constant surface pressure, mirroring the native NEX handler.
@@ -651,7 +599,7 @@ class _ShadowAcquirerBase(_AcquisitionBase):
         import numpy as np
         import xarray
 
-        elev_cfg = self._get_config_value(lambda: None, default=None, dict_key="DOMAIN_MEAN_ELEV_M")
+        elev_cfg = _cfg(self.config, "DOMAIN_MEAN_ELEV_M")
         if elev_cfg is None:
             self.logger.warning(
                 "DOMAIN_MEAN_ELEV_M is not set: the synthetic 'surface_air_pressure' variable "
@@ -667,307 +615,510 @@ class _ShadowAcquirerBase(_AcquisitionBase):
             "standard_name": "surface_air_pressure",
             "long_name": "synthetic surface air pressure",
             "note": (
-                "Constant p0*exp(-z/H) fabricated by the CFS SYMFLUENCE shadow; "
+                "Constant p0*exp(-z/H) fabricated by the CFS community backend; "
                 "NEX-GDDP-CMIP6 publishes no surface pressure (mirrors the native handler)."
             ),
         }
         ds["surface_air_pressure"] = pressure
         return ds
 
+    # -- request resolution helpers ------------------------------------------
 
-def _make_shadow_acquirer(spec: ShadowSpec, native_cls: Any) -> type:
-    """Build the shadow wrapper class for one dataset family."""
-    name = f"CFSShadow{re.sub(r'[^A-Za-z0-9]+', '', spec.family)}Acquirer"
-    doc = (
-        f"CFS shadow wrapper for the native '{spec.family}' acquisition handler.\n\n"
-        f"Backend routing: DATA_ACCESS: community -> CFS "
-        f"({spec.product or 'nex_gddp:<scenario>'}); anything else -> the captured "
-        f"native class ({getattr(native_cls, '__name__', 'MISSING')}). Per-dataset "
-        f"opt-out: {_backend_keys(spec)[0]}: native. Parity: {spec.parity}."
-    )
-    return type(
-        name,
-        (_ShadowAcquirerBase,),
-        {"_spec": spec, "_native_cls": native_cls, "__doc__": doc, "__module__": __name__},
-    )
+    def _resolve_product(self, request, spec) -> tuple[str, dict | None]:
+        """Resolve the CFS product id (+ connector config) for a request."""
+        if spec.product is not None:
+            return spec.product, None
+        # Parallel-name 'CFS' entry: product from options or the legacy key.
+        options = dict(request.options or {})
+        product = options.get("product") or _cfg(self.config, "CFS_PRODUCT")
+        if not product:
+            raise _errors.AcquisitionError(
+                "Dataset 'CFS' needs a product: pass options={'product': "
+                "'provider:product'} or set the CFS_PRODUCT config key "
+                "(e.g. 'gefs:atmos_0p25')."
+            )
+        connector_config = options.get("connector_config") or _cfg(self.config, "CFS_CONNECTOR_CONFIG")
+        return str(product), connector_config
+
+    def _window(self, request, spec) -> tuple[datetime, datetime]:
+        """Resolve and validate the request window against declared coverage."""
+        if not request.window:
+            raise _errors.AcquisitionError(
+                f"{spec.family}: the community backend requires an explicit "
+                "acquisition window (request.window is None)."
+            )
+        try:
+            start = datetime.fromisoformat(str(request.window[0]).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(request.window[1]).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise _errors.AcquisitionError(
+                f"{spec.family}: unparseable window {request.window!r}: {exc}"
+            ) from exc
+        # Compare on naive UTC so 'Z'-suffixed and naive config times mix.
+        start, end = (t.replace(tzinfo=None) for t in (start, end))
+        if spec.temporal is not None:
+            cov_start = datetime.fromisoformat(spec.temporal[0])
+            cov_end = datetime.fromisoformat(spec.temporal[1])
+            if start < cov_start or end > cov_end:
+                raise _errors.WindowOutOfRange(
+                    f"{spec.family}: window [{start}, {end}] is outside the "
+                    f"community backend's coverage [{spec.temporal[0]}, "
+                    f"{spec.temporal[1]}) — the native backend serves it.",
+                    coverage=spec.temporal,
+                )
+        return start, end
+
+    def _bbox(self, request) -> tuple[float, float, float, float]:
+        """Contract bbox (lat_min, lon_min, lat_max, lon_max) -> CFS (W, S, E, N)."""
+        if not request.bbox:
+            raise _errors.AcquisitionError(
+                "The community backend requires a bounding box "
+                "(set BOUNDING_BOX_COORDS: 'north/west/south/east')."
+            )
+        lat_min, lon_min, lat_max, lon_max = (float(v) for v in request.bbox)
+        return (lon_min, lat_min, lon_max, lat_max)
+
+    def _fetch_variables(self, request, spec) -> list[str] | None:
+        """Canonical fetch list for the request (``None`` = product default).
+
+        Priority: explicit ``request.variables`` (CFIF names) over the legacy
+        per-dataset config key (native names, translated). Derived variables
+        (``wind_speed`` everywhere, ERA5 ``specific_humidity``) are replaced by
+        their primitives in the fetch list; unknown names are dropped loudly.
+        """
+        requested: list[str] | None = None
+        if request.variables:
+            requested = sorted(str(v) for v in request.variables)
+        elif spec.variables_key:
+            native = _as_list(_cfg(self.config, spec.variables_key))
+            if native:
+                mapping = spec.native_to_canonical or {}
+                canonical_names = set(CFS_TO_CFIF_MAPPING) | {"dewpoint_temperature"}
+                requested, unmapped = [], []
+                for name in native:
+                    target = mapping.get(name) or (name if name in canonical_names else None)
+                    if target is None:
+                        unmapped.append(name)
+                    elif target not in requested:
+                        requested.append(target)
+                if unmapped:
+                    self.logger.warning(
+                        f"{spec.family}: requested {spec.variables_key} variable(s) with no "
+                        f"canonical-v1 counterpart are NOT included in the community fetch: "
+                        f"{', '.join(unmapped)}. Pin {spec.dataset_ids[0].upper()}_BACKEND: "
+                        "native if you need them."
+                    )
+                if not requested:
+                    raise _errors.AcquisitionError(
+                        f"{spec.family}: none of the requested {spec.variables_key} variables "
+                        f"({', '.join(native)}) map to canonical-v1 names."
+                    )
+        if requested is None:
+            return None
+        if not spec.fetchable:  # parallel-name 'CFS': pass through untouched
+            return requested
+        fetch: list[str] = [v for v in requested if v in spec.fetchable]
+        if "wind_speed" in requested and "wind_speed" not in spec.fetchable:
+            fetch.extend(v for v in ("eastward_wind", "northward_wind") if v not in fetch)
+        if (
+            spec.family == "ERA5"
+            and "specific_humidity" in requested
+        ):
+            fetch.extend(
+                v for v in ("dewpoint_temperature", "surface_air_pressure") if v not in fetch
+            )
+        return fetch or None
+
+    # -- mechanics -----------------------------------------------------------
+
+    def _fetch(self, spec, product, bbox, window, variables, config=None):
+        """Call ``cfs.fetch_sync``, mapping CFS failures onto the protocol taxonomy."""
+        import cfs
+        from cfs.core import exceptions as cfs_exc
+
+        try:
+            return cfs.fetch_sync(
+                product, bbox=bbox, time_range=window, variables=variables, config=config
+            )
+        except cfs_exc.RegistrationRequiredError as exc:
+            raise _errors.AuthRequired(
+                f"{spec.family}: upstream provider requires credentials: {exc}",
+                provider=getattr(exc, "provider", ""),
+                howto=getattr(exc, "instructions", "") or getattr(exc, "registration_url", ""),
+            ) from exc
+        except cfs_exc.SubsetError as exc:
+            raise _errors.WindowOutOfRange(
+                f"{spec.family}: requested subset is empty: {exc}",
+                coverage=spec.temporal,
+            ) from exc
+        except (cfs_exc.DataFormatError, cfs_exc.HarmonizationError) as exc:
+            raise _errors.IntegrityError(
+                f"{spec.family}: upstream delivered unusable data: {exc}"
+            ) from exc
+        except (cfs_exc.RateLimitError, cfs_exc.ProtocolError, cfs_exc.ConnectorError) as exc:
+            raise _errors.UpstreamOutage(
+                f"{spec.family}: upstream failure while fetching '{product}': {exc}",
+                upstream=product,
+            ) from exc
+        except cfs_exc.CFSError as exc:
+            raise _errors.AcquisitionError(
+                f"{spec.family}: CFS fetch of '{product}' failed: {exc}"
+            ) from exc
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            raise _errors.UpstreamOutage(
+                f"{spec.family}: network failure while fetching '{product}': {exc}",
+                upstream=product,
+            ) from exc
+
+    def _output_name(self, product_or_tag: str, window, *, tagged: bool = False) -> str:
+        """Canonical output filename: ``domain_{name}_cfs_{tag}_{start}_{end}.nc``."""
+        tag = product_or_tag if tagged else _product_tag(product_or_tag)
+        domain = str(_cfg(self.config, "DOMAIN_NAME", "domain"))
+        start_str = window[0].strftime("%Y%m%d")
+        end_str = window[1].strftime("%Y%m%d")
+        return f"domain_{domain}_cfs_{tag}_{start_str}_{end_str}.nc"
+
+    def _force_download(self) -> bool:
+        value = _cfg(self.config, "FORCE_DOWNLOAD", False)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    @staticmethod
+    def _delivered_from_file(path: Path) -> set[str]:
+        """Variable names in an existing output (skip-if-exists honesty)."""
+        import xarray
+
+        with xarray.open_dataset(path) as ds:
+            return {str(name) for name in ds.data_vars}
+
+    @staticmethod
+    def _provenance(product: str, detail: str, fetch_result=None) -> dict[str, str]:
+        prov = {
+            "backend": "cfs",
+            "product_id": product,
+            "detail": str(detail or ""),
+            "acquired_at": datetime.now(UTC).isoformat(),
+        }
+        if fetch_result is not None:
+            prov["provider"] = fetch_result.provider
+            prov["elapsed_ms"] = str(fetch_result.elapsed_ms)
+        return prov
 
 
-# ── Dataset (CFIF preprocessing) handlers ────────────────────────────
+def _require_contract():
+    if _contract is None:
+        raise RuntimeError(
+            "The SYMFLUENCE AcquisitionBackend contract is unavailable "
+            "(symfluence is not installed); CommunityForcingBackend cannot operate."
+        )
+    return _contract
 
 
-class CFSDatasetHandler(_DatasetBase):
-    """SYMFLUENCE dataset (CFIF preprocessing) handler for CFS forcing.
+def _fallback_logger():
+    import logging
 
-    CFS already returns canonical-v1 data: CF-aligned names, SI units, and
-    fluxes (never accumulations) — exactly CFIF's conventions. So unlike e.g.
-    the ERA5 handler there are no unit conversions or de-accumulations here:
-    :meth:`process_dataset` is a (mostly identity) rename plus CFIF attribute
-    application, after rejecting projected-grid products (v1 limitation).
+    return logging.getLogger("cfs.integrations.symfluence")
+
+
+# ── The schema-keyed canonical-v1 dataset handler ────────────────────
+
+
+class CanonicalV1Handler(_DatasetBase):
+    """SYMFLUENCE preprocessing handler for canonical-v1 raw files (ANY dataset).
+
+    Registered ONCE under the schema key ``canonical-v1``; SYMFLUENCE resolves
+    it from the acquisition manifest's declared schema, so there is exactly one
+    canonical->CFIF pathway instead of per-dataset self-detecting shadows.
+
+    Canonical-v1 data are CF-aligned SI fluxes — identical conventions to
+    CFIF — so :meth:`process_dataset` performs an (identity) rename, derives
+    ``wind_speed`` from the wind primitives when absent (the one CFIF variable
+    several canonical products do not ship), and applies the standard CFIF
+    attributes. The native per-dataset unit heuristics are deliberately
+    SKIPPED: canonical data are already SI by contract.
+
+    Both canonical grid classes are supported:
+
+    * **regular_latlon** — 1-D ``latitude``/``longitude`` dimension coords;
+      merge/shapefile delegate to the proven regular-grid implementations.
+    * **projected** (rotated-pole / LCC; RDRS first) — native ``rlat``/``rlon``
+      or ``y``/``x`` dims with 2-D ``latitude``/``longitude`` coordinates. The
+      consolidated canonical store is split into native-pipeline-style monthly
+      files (``{DATASET}_monthly_YYYYMM.nc``) and the forcing-grid shapefile is
+      built per-cell from the 2-D coordinate corners (ported from the proven
+      native RDRS implementation — exp10 verified the grids bitwise identical,
+      so the geometry matches).
     """
 
+    # -- contract: naming / structure ----------------------------------------
+
     def get_variable_mapping(self) -> dict[str, str]:
-        """CFS canonical-v1 names -> CFIF names (identity where they coincide)."""
+        """Canonical-v1 names -> CFIF names (identity where they coincide)."""
         return dict(CFS_TO_CFIF_MAPPING)
 
-    def process_dataset(self, ds: xr.Dataset) -> xr.Dataset:
-        """Rename canonical variables to CFIF and apply standard attributes.
-
-        Data arrive in canonical SI units identical to CFIF's (K, kg m-2 s-1,
-        W m-2, Pa, m s-1), so no unit conversion is performed.
-        """
-        return _canonical_to_cfif(self, ds)
-
     def get_coordinate_names(self) -> tuple[str, str]:
-        """CFS regular-grid canonical datasets use 1-D latitude/longitude."""
+        """Canonical-v1 always names its geographic coordinates latitude/longitude.
+
+        Regular grids carry them as 1-D dimension coordinates; projected grids
+        carry them as 2-D auxiliary coordinates over the native dims (EASYMORE
+        handles both by name).
+        """
         return ("latitude", "longitude")
 
     def needs_merging(self) -> bool:
-        """Standardize raw files into the merged layout (rename + attributes)."""
+        """Standardize raw canonical files into the merged layout."""
         return True
 
-    def merge_forcings(
-        self, raw_forcing_path: Path, merged_forcing_path: Path, start_year: int, end_year: int
-    ) -> None:
-        """Copy raw files to the merged layout via :meth:`process_dataset`.
+    def get_merged_file_pattern(self, year: int, month: int) -> str:
+        """Native-pipeline-style monthly name (``RDRS_monthly_201806.nc``)."""
+        return f"{self._dataset_prefix()}_monthly_{year}{month:02d}.nc"
 
-        Delegates to the ERA5 handler's generic implementation (glob raw
-        ``*.nc``, run ``self.process_dataset``, write atomically), which is
-        grid- and dataset-agnostic for regular lat/lon products.
-        """
-        from symfluence.data.preprocessing.dataset_handlers.era5_utils import ERA5Handler
-
-        ERA5Handler.merge_forcings(self, raw_forcing_path, merged_forcing_path, start_year, end_year)
-
-    def create_shapefile(
-        self, shapefile_path: Path, merged_forcing_path: Path, dem_path: Path, elevation_calculator
-    ) -> Path:
-        """Build the forcing-grid shapefile for EASYMORE remapping weights.
-
-        Delegates to the ERA5 handler's regular lat/lon grid implementation,
-        which reads 1-D ``latitude``/``longitude`` — exactly the canonical-v1
-        regular-grid layout this handler supports.
-        """
-        from symfluence.data.preprocessing.dataset_handlers.era5_utils import ERA5Handler
-
-        return cast(
-            Path,
-            ERA5Handler.create_shapefile(
-                self, shapefile_path, merged_forcing_path, dem_path, elevation_calculator
-            ),
+    def _dataset_prefix(self) -> str:
+        dataset = self._get_config_value(
+            lambda: self.config.forcing.dataset, default="CFS", dict_key="FORCING_DATASET"
         )
-
-
-class _ShadowDatasetHandlerBase(CFSDatasetHandler):
-    """Self-detecting dataset-handler shadow registered under a native key.
-
-    Every method that touches raw files first detects canonical-v1 (the
-    ``cfs_schema`` global attribute on one raw file — cheap, and the verdict
-    is cached): canonical files take the CFS canonical→CFIF path, anything
-    else delegates to the captured native dataset handler instance.
-    ``process_dataset`` detects per dataset, so a domain can mix cached
-    native raw files with community-acquired canonical ones.
-
-    Where SYMFLUENCE has no native handler under the key (NLDAS family),
-    ``_native_cls`` is ``None`` and non-canonical input raises a clear error:
-    those keys serve community-acquired files only.
-    """
-
-    _cfs_shadow = True
-    _spec: ShadowSpec
-    _native_cls: Any = None
-
-    def __init__(self, config: Any, logger: Any, project_dir: Path, **kwargs: Any) -> None:
-        super().__init__(config, logger, project_dir, **kwargs)
-        self._native = (
-            self._native_cls(config, logger, project_dir, **kwargs)
-            if self._native_cls is not None
-            else None
-        )
-        self._canonical_verdict: bool | None = None
-
-    # -- detection ---------------------------------------------------------
+        return re.sub(r"[^A-Za-z0-9]+", "_", str(dataset)).strip("_").upper() or "CFS"
 
     @staticmethod
-    def _is_canonical(ds: Any) -> bool:
-        """A canonical-v1 dataset carries the ``cfs_schema`` global attribute."""
-        return str(getattr(ds, "attrs", {}).get("cfs_schema", "")).startswith("canonical-")
+    def _is_projected(ds: xr.Dataset) -> bool:
+        """Projected canonical layout: 2-D latitude over native (rlat/rlon, y/x) dims."""
+        return "latitude" in ds.coords and getattr(ds["latitude"], "ndim", 1) == 2
 
-    def _probe_dir(self, path: Any) -> bool | None:
-        """Open one ``*.nc`` file under ``path`` and check ``cfs_schema``; cache the verdict."""
-        import xarray
-
-        if not path:
-            return None
-        path = Path(path)
-        if not path.is_dir():
-            return None
-        files = sorted(path.glob("*.nc"))
-        if not files:
-            return None
-        try:
-            with xarray.open_dataset(files[0]) as ds:
-                verdict = self._is_canonical(ds)
-        except Exception:  # noqa: BLE001 - unreadable file: leave undetermined
-            return None
-        self._canonical_verdict = verdict
-        return verdict
-
-    def _use_canonical(self, *candidates: Any) -> bool:
-        """Resolve (and cache) the canonical-vs-native verdict.
-
-        Probes the given candidate directories first, then the project's raw
-        forcing directories. When nothing is determinable yet, prefer the
-        native handler when one exists (exact native behavior), else the
-        canonical path (the only thing these keys can serve).
-        """
-        if self._canonical_verdict is not None:
-            return self._canonical_verdict
-        for candidate in candidates:
-            verdict = self._probe_dir(candidate)
-            if verdict is not None:
-                return verdict
-        for default_dir in (
-            Path(self.project_dir) / "data" / "forcing" / "raw_data",
-            Path(self.project_dir) / "forcing" / "raw_data",
-        ):
-            verdict = self._probe_dir(default_dir)
-            if verdict is not None:
-                return verdict
-        return self._native is None
-
-    def _require_native(self, context: str) -> Any:
-        if self._native is None:
-            raise NotImplementedError(
-                f"{context}, but SYMFLUENCE has no native dataset handler under the "
-                f"'{self._spec.dataset_keys[0]}' preprocessing key — the CFS plugin provides it "
-                "for community-acquired canonical-v1 files only. Re-acquire the forcing with "
-                "DATA_ACCESS: community, or use a forcing dataset with a native handler."
-            )
-        return self._native
-
-    # -- BaseDatasetHandler contract ----------------------------------------
-
-    def get_variable_mapping(self) -> dict[str, str]:
-        if self._use_canonical():
-            return dict(CFS_TO_CFIF_MAPPING)
-        native = self._require_native("The raw forcing files are not canonical-v1")
-        return cast("dict[str, str]", native.get_variable_mapping())
+    # -- contract: per-dataset processing ------------------------------------
 
     def process_dataset(self, ds: xr.Dataset) -> xr.Dataset:
-        # Per-dataset detection (not the cached dir verdict): mixed raw
-        # directories route each file to the right pipeline.
-        if self._is_canonical(ds):
-            return _canonical_to_cfif(self, ds)
-        native = self._require_native("process_dataset() received a non-canonical dataset")
-        return cast("xr.Dataset", native.process_dataset(ds))
+        """Rename canonical variables to CFIF, derive wind_speed, apply attributes.
 
-    def get_coordinate_names(self) -> tuple[str, str]:
-        if self._use_canonical():
-            return ("latitude", "longitude")
-        native = self._require_native("The raw forcing files are not canonical-v1")
-        return cast("tuple[str, str]", native.get_coordinate_names())
+        No unit conversion and none of the native handlers' unit heuristics:
+        canonical-v1 guarantees SI units and fluxes (never accumulations).
+        """
+        renames = {
+            old: new for old, new in CFS_TO_CFIF_MAPPING.items()
+            if old in ds.variables and new != old
+        }
+        if renames:  # pragma: no cover - identity mapping today; future-proofing
+            ds = ds.rename(renames)
+        ds = _derive_wind_speed(ds)
+        return cast("xr.Dataset", self.apply_standard_attributes(ds, overrides={
+            "precipitation_flux": {"units": "kg m-2 s-1", "standard_name": "precipitation_rate"}
+        }))
 
-    def needs_merging(self) -> bool:
-        if self._use_canonical():
-            return True
-        native = self._require_native("The raw forcing files are not canonical-v1")
-        return cast(bool, native.needs_merging())
+    # -- contract: merge ------------------------------------------------------
 
     def merge_forcings(
         self, raw_forcing_path: Path, merged_forcing_path: Path, start_year: int, end_year: int
     ) -> None:
-        if self._use_canonical(raw_forcing_path):
-            # The generic canonical merge calls self.process_dataset per file,
-            # which self-detects — mixed directories are handled per file.
-            CFSDatasetHandler.merge_forcings(
+        """Standardize raw canonical files into the merged layout (grid-aware).
+
+        Regular grids: per-file standardization via the generic regular-grid
+        loop (raw filenames preserved). Projected grids: the consolidated
+        canonical store is processed and split into monthly files exactly where
+        the native projected pipeline expects them.
+        """
+        import xarray
+
+        raw_forcing_path = Path(raw_forcing_path)
+        merged_forcing_path = Path(merged_forcing_path)
+        merged_forcing_path.mkdir(parents=True, exist_ok=True)
+
+        files = sorted(raw_forcing_path.glob("*.nc"))
+        files = [f for f in files if self._file_overlaps_period(f, start_year, end_year)]
+        if not files:
+            self.logger.warning(f"No canonical raw files found in {raw_forcing_path}")
+            return
+
+        with xarray.open_dataset(files[0]) as probe:
+            projected = self._is_projected(probe)
+
+        if projected:
+            self._merge_projected(files, merged_forcing_path, start_year, end_year)
+        else:
+            # The ERA5 handler's merge loop is grid-agnostic for regular
+            # lat/lon products (glob, self.process_dataset, atomic write).
+            from symfluence.data.preprocessing.dataset_handlers.era5_utils import ERA5Handler
+
+            ERA5Handler.merge_forcings(
                 self, raw_forcing_path, merged_forcing_path, start_year, end_year
             )
-            return
-        native = self._require_native("The raw forcing files are not canonical-v1")
-        native.merge_forcings(raw_forcing_path, merged_forcing_path, start_year, end_year)
+
+    def _merge_projected(
+        self, files: list[Path], merged_forcing_path: Path, start_year: int, end_year: int
+    ) -> None:
+        """Split consolidated projected canonical store(s) into monthly files.
+
+        Mirrors the native projected pipeline's consolidated-file path
+        (rdrs_utils._merge_from_consolidated): per-month slice, complete hourly
+        time axis (gap interpolation + edge fill), standard time encoding and
+        cleaned attributes, written as ``{DATASET}_monthly_YYYYMM.nc``.
+        """
+        import pandas as pd
+        import xarray
+
+        self.logger.info(
+            f"Merging {len(files)} consolidated canonical (projected-grid) file(s) "
+            "into monthly files"
+        )
+        datasets = [self.process_dataset(self.open_dataset(f)) for f in files]
+        ds = datasets[0] if len(datasets) == 1 else xarray.concat(
+            datasets, dim="time", data_vars="all"
+        ).sortby("time").drop_duplicates(dim="time")
+
+        for year in range(start_year - 1, end_year + 1):
+            for month in range(1, 13):
+                start_time = pd.Timestamp(year, month, 1)
+                if month == 12:
+                    end_time = pd.Timestamp(year + 1, 1, 1) - pd.Timedelta(hours=1)
+                else:
+                    end_time = pd.Timestamp(year, month + 1, 1) - pd.Timedelta(hours=1)
+
+                monthly = ds.sel(time=slice(str(start_time), str(end_time)))
+                if monthly.sizes.get("time", 0) == 0:
+                    continue
+
+                expected_times = pd.date_range(start=start_time, end=end_time, freq="h")
+                monthly = monthly.reindex(time=expected_times)
+                monthly = monthly.interpolate_na(dim="time", method="linear")
+                monthly = monthly.ffill(dim="time").bfill(dim="time")
+
+                monthly = self.setup_time_encoding(monthly)
+                monthly = self.add_metadata(
+                    monthly,
+                    "canonical-v1 projected store split into monthly files (CFS community backend)",
+                )
+                monthly = self.clean_variable_attributes(monthly)
+
+                out = merged_forcing_path / self.get_merged_file_pattern(year, month)
+                monthly.to_netcdf(out)
+                self.logger.info(f"Saved monthly file: {out.name}")
+
+        for d in datasets:
+            d.close()
+
+    # -- contract: forcing-grid shapefile -------------------------------------
 
     def create_shapefile(
         self, shapefile_path: Path, merged_forcing_path: Path, dem_path: Path, elevation_calculator
     ) -> Path:
-        if self._use_canonical(merged_forcing_path):
-            return CFSDatasetHandler.create_shapefile(
-                self, shapefile_path, merged_forcing_path, dem_path, elevation_calculator
+        """Build the forcing-grid shapefile (grid-aware) for remapping weights."""
+        import xarray
+
+        merged_forcing_path = Path(merged_forcing_path)
+        files = sorted(merged_forcing_path.glob("*.nc"))
+        if not files:
+            raise FileNotFoundError(
+                f"No merged canonical forcing files found in {merged_forcing_path}"
             )
-        native = self._require_native("The merged forcing files are not canonical-v1")
-        return cast(
-            Path,
-            native.create_shapefile(shapefile_path, merged_forcing_path, dem_path, elevation_calculator),
-        )
+        with xarray.open_dataset(files[0]) as probe:
+            projected = self._is_projected(probe)
 
+        if projected:
+            return self._create_projected_shapefile(
+                shapefile_path, files[0], dem_path, elevation_calculator
+            )
 
-def _make_shadow_dataset_handler(spec: ShadowSpec, native_cls: Any) -> type:
-    """Build the self-detecting dataset-handler shadow class for one family."""
-    name = f"CFSShadow{re.sub(r'[^A-Za-z0-9]+', '', spec.family)}DatasetHandler"
-    if native_cls is None:
-        doc = (
-            f"CFS canonical dataset handler for the '{spec.dataset_keys[0]}' key. SYMFLUENCE has "
-            "no native handler here; community-acquired canonical-v1 files only."
+        from symfluence.data.preprocessing.dataset_handlers.era5_utils import ERA5Handler
+
+        return cast(Path, ERA5Handler.create_shapefile(
+            self, shapefile_path, merged_forcing_path, dem_path, elevation_calculator
+        ))
+
+    def _create_projected_shapefile(
+        self, shapefile_path: Path, sample_file: Path, dem_path: Path, elevation_calculator
+    ) -> Path:
+        """Per-cell polygons from native dims + 2-D lat/lon corners.
+
+        Ported from the proven native projected implementation
+        (rdrs_utils.create_shapefile); the canonical grid was verified bitwise
+        identical to the native grid (exp10), so the geometry matches. Corner
+        (i, j) cells are clamped at the grid edge exactly like the native code.
+        """
+        import geopandas as gpd
+        from shapely.geometry import Polygon
+
+        self.logger.info("Creating projected-grid (canonical-v1) forcing shapefile")
+        dataset = self._get_config_value(
+            lambda: self.config.forcing.dataset, default="unknown", dict_key="FORCING_DATASET"
         )
-    else:
-        doc = (
-            f"Self-detecting shadow of {native_cls.__name__} for the '{spec.dataset_keys[0]}' key: "
-            "canonical-v1 raw files take the CFS canonical->CFIF path, native-format files "
-            "delegate to the captured native handler."
-        )
-    return type(
-        name,
-        (_ShadowDatasetHandlerBase,),
-        {"_spec": spec, "_native_cls": native_cls, "__doc__": doc, "__module__": __name__},
-    )
+        output_shapefile = Path(shapefile_path) / f"forcing_{dataset}.shp"
+
+        with self.open_dataset(sample_file) as ds:
+            lat = ds["latitude"].values
+            lon = ds["longitude"].values
+        n_y, n_x = lat.shape
+        self.logger.info(f"Projected grid dimensions: {n_y} x {n_x}")
+
+        # Corner fallbacks are the EXACT native shape (rdrs_utils): a missing
+        # (i+1 / j+1) neighbour falls back to the (i, j) corner itself, so the
+        # last row/column produce the same degenerate edge cells the native
+        # shapefile carries (EASYMORE's intersection handles them identically).
+        geometries, ids, lats, lons = [], [], [], []
+        for i in range(n_y):
+            for j in range(n_x):
+                lat_corners = [
+                    lat[i, j],
+                    lat[i, j + 1] if j + 1 < n_x else lat[i, j],
+                    lat[i + 1, j + 1] if i + 1 < n_y and j + 1 < n_x else lat[i, j],
+                    lat[i + 1, j] if i + 1 < n_y else lat[i, j],
+                ]
+                lon_corners = [
+                    lon[i, j],
+                    lon[i, j + 1] if j + 1 < n_x else lon[i, j],
+                    lon[i + 1, j + 1] if i + 1 < n_y and j + 1 < n_x else lon[i, j],
+                    lon[i + 1, j] if i + 1 < n_y else lon[i, j],
+                ]
+                geometries.append(Polygon(zip(lon_corners, lat_corners)))
+                ids.append(i * n_x + j)
+                lats.append(float(lat[i, j]))
+                lons.append(float(lon[i, j]))
+
+        gdf = gpd.GeoDataFrame({
+            "geometry": geometries,
+            "ID": ids,
+            self._get_config_value(
+                lambda: self.config.forcing.shape_lat_name, default="lat",
+                dict_key="FORCING_SHAPE_LAT_NAME",
+            ): lats,
+            self._get_config_value(
+                lambda: self.config.forcing.shape_lon_name, default="lon",
+                dict_key="FORCING_SHAPE_LON_NAME",
+            ): lons,
+        }, crs="EPSG:4326")
+
+        self.logger.info("Calculating per-cell elevations")
+        gdf["elev_m"] = elevation_calculator(gdf, dem_path, batch_size=50)
+
+        if self._get_config_value(lambda: None, default=False, dict_key="REMOVE_INVALID_ELEVATION_CELLS"):
+            valid_count = len(gdf)
+            gdf = gdf[gdf["elev_m"] != -9999].copy()
+            removed = valid_count - len(gdf)
+            if removed:
+                self.logger.info(f"Removed {removed} cells with invalid elevation values")
+
+        output_shapefile.parent.mkdir(parents=True, exist_ok=True)
+        gdf.to_file(output_shapefile)
+        self.logger.info(f"Projected-grid forcing shapefile saved: {output_shapefile}")
+        return output_shapefile
 
 
 # ── Registration ─────────────────────────────────────────────────────
 
 
-def _install_shadows(registries: Any) -> None:
-    """Capture native classes and register the shadow wrappers (idempotent).
-
-    Runs after SYMFLUENCE's in-tree handlers registered (plugin discovery is
-    last in the bootstrap), so ``Registry.get`` returns the genuine native
-    class. On re-registration (entry point + self-register tail) the existing
-    shadow is detected via ``_cfs_shadow`` and left in place, so the captured
-    native class is never itself a wrapper.
-    """
-    acquisition = registries.acquisition_handlers
-    datasets = registries.dataset_handlers
-
-    for spec in SHADOW_SPECS:
-        existing = [acquisition.get(alias) for alias in spec.aliases]
-        if not any(getattr(cls, "_cfs_shadow", False) for cls in existing if cls is not None):
-            native_cls = next((cls for cls in existing if cls is not None), None)
-            wrapper = _make_shadow_acquirer(spec, native_cls)
-            for alias in spec.aliases:
-                acquisition.add(alias, wrapper)
-
-        existing_ds = [datasets.get(key) for key in spec.dataset_keys]
-        if not any(getattr(cls, "_cfs_shadow", False) for cls in existing_ds if cls is not None):
-            native_ds_cls = next((cls for cls in existing_ds if cls is not None), None)
-            handler_cls = _make_shadow_dataset_handler(spec, native_ds_cls)
-            for key in spec.dataset_keys:
-                datasets.add(key, handler_cls)
-
-
 def register() -> None:
     """SYMFLUENCE plugin hook (``symfluence.plugins`` entry point, zero-arg).
 
-    Called by SYMFLUENCE's plugin discovery on ``import symfluence`` — after
-    every in-tree handler registered, so the shadow installation can capture
-    the genuine native classes. Raises ``ImportError`` when SYMFLUENCE is
-    absent — discovery logs and skips a failing plugin, so this is safe by
-    design. Re-registration is idempotent: the parallel-name handlers are
-    plain overwrites, and already-installed shadows are detected and kept
-    (their captured native class is never replaced by a wrapper).
+    Called by SYMFLUENCE's plugin discovery on ``import symfluence``. Adds the
+    community backend to ``R.acquisition_backends`` (the framework's selection
+    layer decides per request whether it serves) and the schema-keyed
+    canonical-v1 dataset handler to ``R.dataset_handlers`` (resolved from the
+    acquisition manifest's declared schema). Raises ``ImportError`` when
+    SYMFLUENCE is absent — discovery logs and skips a failing plugin, so this
+    is safe by design. Re-registration is an idempotent overwrite.
     """
     from symfluence.core.registries import R
 
-    R.acquisition_handlers.add("CFS", CFSForcingAcquirer)
-    R.dataset_handlers.add("cfs", CFSDatasetHandler)
-    _install_shadows(R)
+    R.acquisition_backends.add("community", CommunityForcingBackend)
+    R.dataset_handlers.add("canonical-v1", CanonicalV1Handler)
 
 
 # Self-register when SYMFLUENCE is importable. This complements the entry
@@ -975,7 +1126,7 @@ def register() -> None:
 # above triggers symfluence's bootstrap mid-module, and its plugin discovery
 # then sees a partially-initialized module (no ``register`` yet) and skips the
 # cfs entry point. Registering here, at the end of the module body, makes the
-# handlers available regardless of import order; register() is idempotent so
+# backend available regardless of import order; register() is idempotent so
 # the entry-point path stays harmless.
 if HAVE_SYMFLUENCE:  # pragma: no cover - exercised only with SYMFLUENCE present
     import contextlib
