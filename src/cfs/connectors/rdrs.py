@@ -15,6 +15,7 @@ derivation is needed). Anonymous, so this connector is live-verifiable.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING
 
@@ -96,12 +97,22 @@ class RDRSConnector(BaseForcingConnector):
 
     @staticmethod
     def _open(url: str):
-        """Open the anonymous OPeNDAP aggregation (netcdf4 engine, pydap fallback)."""
+        """Open the anonymous OPeNDAP aggregation lazily, WITHOUT dask.
+
+        ``chunks={}`` (one whole-variable dask chunk) is a trap on this store:
+        dask fused the rlat/rlon window into the DAP constraint but **not** the
+        time slice, so every variable read pulled the full 45-year time axis
+        for the spatial window (~128 MB/var; a 3-day fetch moved ~2.3 GB). A
+        plain non-dask open uses xarray's lazy backend indexing, which pushes
+        the time slice *and* the spatial window down into one small DAP
+        hyperslab request per variable — the same access pattern as reading
+        the store with netCDF4 directly.
+        """
         import xarray as xr
 
         for engine in ("netcdf4", "pydap"):
             try:
-                return xr.open_dataset(url, engine=engine, decode_times=True, chunks={})
+                return xr.open_dataset(url, engine=engine, decode_times=True)
             except Exception as e:  # noqa: BLE001 - try the next engine
                 last = e
         raise ConnectorError("rdrs", f"could not open OPeNDAP store: {last}")
@@ -118,13 +129,23 @@ class RDRSConnector(BaseForcingConnector):
         settings = get_settings()
         self._guard_area(bbox, settings)
 
-        ds = self._open(OPENDAP_URL)
-        ds = subset_2d_grid(ds, bbox, lat_name="lat", lon_name="lon")  # isel rlat/rlon
-        ds = ds.sel(time=slice(time_range.start, time_range.end))
-        if ds.sizes.get("time", 0) == 0:
-            raise SubsetError(f"No RDRS data in [{time_range.start}, {time_range.end}]")
+        def _pull() -> xr.Dataset:
+            ds = self._open(OPENDAP_URL)
+            ds = subset_2d_grid(ds, bbox, lat_name="lat", lon_name="lon")  # isel rlat/rlon
+            ds = ds.sel(time=slice(time_range.start, time_range.end))
+            if ds.sizes.get("time", 0) == 0:
+                raise SubsetError(f"No RDRS data in [{time_range.start}, {time_range.end}]")
 
-        canonical = harmonize(ds, _MAPPINGS, requested=variables, lat_name="lat", lon_name="lon")
+            canonical: xr.Dataset = harmonize(
+                ds, _MAPPINGS, requested=variables, lat_name="lat", lon_name="lon"
+            )
+            # Materialize exactly once, AFTER both subsets: one windowed DAP
+            # hyperslab read per variable. The QC sample in _finalize and any
+            # caller-side .load() then hit in-memory numpy instead of each
+            # re-pulling from PAVICS (lazy handles don't cache reads).
+            return canonical.load()
+
+        canonical = await asyncio.to_thread(_pull)
         return canonical, self._finalize(
             canonical,
             product=product,

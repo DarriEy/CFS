@@ -72,6 +72,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_v1.1`. It now parses the `_vN[.N…]` suffix into a numeric version tuple
   (unsuffixed = version 0) and picks the highest, so `_v10.0` beats `_v2.0`
   regardless of listing order.
+- **RDRS/CaSR fetch no longer pulls the full 45-year time axis**: the
+  connector opened the PAVICS NCML aggregation with `chunks={}`
+  (whole-variable dask chunks), so dask fused the rlat/rlon window into the
+  OPeNDAP constraint but not the time slice — every variable read pulled
+  1980–2024 for the spatial window (~128 MB/var), once for the QC sample
+  inside `fetch` and again on the caller's `.load()` (~2.3 GB / ~30 min
+  for a 3-day, 9-variable request). The store is now opened without dask
+  (plain lazy backend indexing, like the other anonymous OPeNDAP
+  connectors), so time and space both push down into one small DAP
+  hyperslab per variable, and the connector materializes the harmonized
+  subset exactly once before QC runs (its `lazy=False` flag is now true).
+  A 3-day Logan-box fetch moves ~0.5 MB of data payload instead of
+  ~2.3 GB and is live-verified bitwise-identical to the native SYMFLUENCE
+  RDRS handler on all 9 mapped variables. No other connector mixes dask
+  single-chunk opens with OPeNDAP (gridMET/NARR/nClimGrid-Daily and the
+  Earthdata mixin already open pydap-lazy without dask).
 - **NLDAS-2 fetch batched to one request per hour-file**: each hour was
   opened lazily via pydap and pulled per variable (~10 HTTP round-trips per
   hour-file, projected >3 h for a 49-hour window). The connector now issues
