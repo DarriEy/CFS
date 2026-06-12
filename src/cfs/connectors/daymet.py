@@ -86,6 +86,22 @@ _NEEDS = {
 }
 
 
+def _sanitize_grid_mapping_attrs(ds: xr.Dataset) -> xr.Dataset:
+    """Drop dict-valued attrs and pin the LCC proj4 string.
+
+    pydap surfaces the granule's ``lambert_conformal_conic`` grid-mapping
+    container as a DICT-valued global attribute, which xarray refuses to
+    serialize (``to_netcdf`` raises TypeError) — so every consumer writing the
+    canonical cube would crash (live-hit 2026-06-12). The projection is kept
+    as the stable proj4 string instead.
+    """
+    for key, value in list(ds.attrs.items()):
+        if isinstance(value, dict):
+            del ds.attrs[key]
+    ds.attrs["daymet_lcc_proj4"] = DAYMET_PROJ4
+    return ds
+
+
 @register("daymet")
 class DaymetConnector(EarthdataAuthMixin, BaseForcingConnector):
     slug = "daymet"
@@ -200,6 +216,7 @@ class DaymetConnector(EarthdataAuthMixin, BaseForcingConnector):
         ds_all = ds_all.assign(assigns)
 
         canonical = harmonize(ds_all, _MAPPINGS, requested=variables, lat_name="lat", lon_name="lon")
+        canonical = _sanitize_grid_mapping_attrs(canonical)
         return canonical, self._finalize(
             canonical,
             product=product,

@@ -76,3 +76,22 @@ def test_daymet_offers_no_wind_or_pressure():
     assert CanonicalVar.EASTWARD_WIND not in canon
     assert CanonicalVar.SURFACE_AIR_PRESSURE not in canon
     assert CanonicalVar.SPECIFIC_HUMIDITY not in canon  # would need pressure→elevation
+
+
+def test_sanitize_grid_mapping_attrs_keeps_netcdf_serializable():
+    """pydap leaks the grid-mapping container as a dict attr; it must go."""
+    from cfs.connectors.daymet import DAYMET_PROJ4, _sanitize_grid_mapping_attrs
+
+    ds = xr.Dataset(
+        {"air_temperature": (("time",), np.array([280.0], dtype="float32"))},
+        coords={"time": [0]},
+        attrs={
+            "lambert_conformal_conic": {"grid_mapping_name": "lambert_conformal_conic"},
+            "source": "Daymet V4R1",
+        },
+    )
+    out = _sanitize_grid_mapping_attrs(ds)
+    assert "lambert_conformal_conic" not in out.attrs
+    assert out.attrs["source"] == "Daymet V4R1"  # plain attrs survive
+    assert out.attrs["daymet_lcc_proj4"] == DAYMET_PROJ4
+    assert not any(isinstance(v, dict) for v in out.attrs.values())
