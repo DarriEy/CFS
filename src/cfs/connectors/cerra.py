@@ -46,7 +46,7 @@ class CERRAConnector(CDSReanalysisConnector):
               scale=1.0 / 3600.0, note="CERRA 1-h forecast accumulation (kg m-2) -> flux"),
         _RVar("surface_solar_radiation_downwards", "ssrd", CanonicalVar.SHORTWAVE_RADIATION_DOWN,
               scale=1.0 / 3600.0, note="CERRA 1-h forecast accumulation (J m-2) -> flux"),
-        _RVar("thermal_surface_radiation_downwards", "strd", CanonicalVar.LONGWAVE_RADIATION_DOWN,
+        _RVar("surface_thermal_radiation_downwards", "strd", CanonicalVar.LONGWAVE_RADIATION_DOWN,
               scale=1.0 / 3600.0, note="CERRA 1-h forecast accumulation (J m-2) -> flux"),
     ]
     rh_name, t_name, p_name = "r2", "t2m", "sp"

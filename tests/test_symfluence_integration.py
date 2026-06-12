@@ -340,6 +340,18 @@ class TestCapabilities:
         assert caps["NWM3_RETROSPECTIVE"].parity_grade == "bit-identical"
         assert caps["CASR"].parity_grade == "bit-identical"
 
+        # 2026-06-12b campaign additions (exp11/exp12/exp14/exp16).
+        assert caps["CARRA"].parity_grade == "value-identical:grib-repack"
+        assert caps["CERRA"].parity_grade == "value-identical:grib-repack"
+        assert caps["HRRR"].parity_grade == "bit-identical"
+        assert caps["DAYMET"].parity_grade == "bit-identical:point-sampled"
+        assert caps["CARRA"].grid_class is GridClass.REGULAR_LATLON
+        assert caps["CERRA"].grid_class is GridClass.REGULAR_LATLON
+        assert caps["HRRR"].grid_class is GridClass.PROJECTED
+        assert caps["DAYMET"].grid_class is GridClass.PROJECTED
+        assert caps["CARRA"].auth == {"cds"} and caps["CERRA"].auth == {"cds"}
+        assert caps["DAYMET"].auth == {"earthdata"}
+
         assert caps["RDRS"].grid_class is GridClass.PROJECTED
         assert caps["CONUS404"].grid_class is GridClass.PROJECTED
         assert caps["NWM3_RETROSPECTIVE"].grid_class is GridClass.PROJECTED
@@ -370,6 +382,50 @@ class TestCapabilities:
         ):
             with pytest.raises(WindowOutOfRange):
                 backend.acquire(_request(tmp_path, dataset=dataset, window=window))
+
+    def test_cerra_publishes_no_wind_components(self, tmp_path):
+        """CERRA ships only the combined 10m wind speed (si10), never u/v."""
+        from cfs.integrations.symfluence import _spec_for
+
+        spec = _spec_for("CERRA")
+        assert spec is not None
+        assert "wind_speed" in spec.variables and "wind_speed" in spec.fetchable
+        assert not ({"eastward_wind", "northward_wind"} & spec.variables)
+
+    def test_hrrr_analysis_offers_no_precipitation(self, tmp_path):
+        """The hrrrzarr analysis stream has no precip on EITHER side (exp14)."""
+        from cfs.integrations.symfluence import _spec_for
+
+        spec = _spec_for("HRRR")
+        assert spec is not None
+        assert spec.product == "hrrr:sfc_anl"
+        assert "precipitation_flux" not in spec.variables
+        assert "precipitation_flux" not in spec.fetchable
+
+    def test_daymet_offers_the_daily_derivation_trio(self, tmp_path):
+        """Daymet's CFIF-declarable variables are the three daily derivations."""
+        from cfs.integrations.symfluence import _spec_for
+
+        spec = _spec_for("DAYMET")
+        assert spec is not None
+        assert spec.variables == {
+            "air_temperature", "precipitation_flux",
+            "surface_downwelling_shortwave_flux",
+        }
+        # dewpoint is fetchable (canonical) but not CFIF-declarable.
+        assert "dewpoint_temperature" in spec.fetchable
+
+    def test_regional_datasets_declare_spatial_domains(self, tmp_path):
+        """CARRA/CERRA/HRRR/DAYMET carry a (W, S, E, N) spatial domain."""
+        from cfs.integrations.symfluence import _spec_for
+
+        assert _spec_for("CARRA").spatial == (-180.0, 55.0, 180.0, 90.0)
+        assert _spec_for("CERRA").spatial == (-58.0, 20.0, 74.0, 74.0)
+        assert _spec_for("HRRR").spatial == (-134.1, 21.1, -60.9, 52.6)
+        assert _spec_for("DAYMET").spatial == (-179.0, 14.0, -52.0, 83.0)
+        # Previously gated datasets keep their pre-spatial behaviour.
+        assert _spec_for("ERA5").spatial is None
+        assert _spec_for("CONUS404").spatial is None
 
     def test_aorc_declares_post_2002_coverage(self, tmp_path):
         pytest.importorskip("symfluence")
@@ -499,6 +555,60 @@ class TestAcquire:
                 tmp_path, dataset="AORC",
                 window=("1999-01-01 00:00", "1999-01-03 00:00"),
             ))
+
+    def test_out_of_domain_bbox_is_refused(self, tmp_path):
+        """Regional datasets refuse out-of-domain bboxes with a clear error.
+
+        This is NOT a decline-to-native: the data does not exist there on any
+        backend, so a plain AcquisitionError (not WindowOutOfRange /
+        DatasetUnsupported) is raised.
+        """
+        pytest.importorskip("symfluence")
+        from symfluence.data.backends.errors import AcquisitionError
+
+        backend = _backend(tmp_path)
+        # Default test bbox is the Alps (46-47N, 8-9E): south of CARRA's
+        # Arctic domain, outside HRRR's and Daymet's longitudes.
+        for dataset in ("CARRA", "HRRR", "DAYMET"):
+            with pytest.raises(AcquisitionError, match="spatial domain"):
+                backend.acquire(_request(
+                    tmp_path, dataset=dataset,
+                    window=("2018-06-01 00:00", "2018-06-03 00:00"),
+                ))
+        # CERRA with a CONUS bbox (west of the CERRA domain).
+        with pytest.raises(AcquisitionError, match="spatial domain"):
+            backend.acquire(_request(
+                tmp_path, dataset="CERRA",
+                bbox=(39.5, -105.5, 40.0, -105.0),
+                window=("2018-06-01 00:00", "2018-06-03 00:00"),
+            ))
+
+    def test_carra_domain_key_reaches_the_connector(self, tmp_path, monkeypatch):
+        """The native CARRA_DOMAIN key selects the CDS Arctic domain split."""
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+
+        import cfs
+
+        seen = {}
+
+        def fake_fetch_sync(product, bbox, time_range, variables=None, config=None):
+            seen["product"] = product
+            seen["config"] = config
+            return _canonical_dataset(xr, np), _fetch_result(
+                ["air_temperature", "precipitation_flux"], product_id=product
+            )
+
+        monkeypatch.setattr(cfs, "fetch_sync", fake_fetch_sync)
+        backend = _backend(tmp_path, CARRA_DOMAIN="east_domain")
+        backend.acquire(_request(
+            tmp_path, dataset="CARRA",
+            bbox=(67.0, 18.0, 68.0, 20.0),  # Scandinavia (inside the Arctic domain)
+            window=("2018-06-01 00:00", "2018-06-03 00:00"),
+        ))
+        assert seen["product"] == "carra:single_levels"
+        assert seen["config"] == {"domain": "east_domain"}
 
     def test_missing_window_is_an_acquisition_error(self, tmp_path):
         pytest.importorskip("symfluence")
@@ -690,6 +800,23 @@ class TestParallelNameCFS:
         )
         assert backend.name == "community"
 
+    def test_framework_routes_newly_gated_datasets_to_community(self, tmp_path):
+        """Selection smoke for the 2026-06-12b additions (graded -> community)."""
+        pytest.importorskip("symfluence")
+        from symfluence.data.backends.selection import select_backend
+
+        from cfs.integrations.symfluence import register
+
+        register()
+        config = _make_symfluence_config(tmp_path, DATA_ACCESS="community")
+        for dataset in ("CARRA", "CERRA", "HRRR", "DAYMET"):
+            backend = select_backend(
+                dataset, config,
+                window=("2018-06-01 00:00", "2018-06-04 00:00"),
+                logger=logging.getLogger("test_cfs"),
+            )
+            assert backend.name == "community", dataset
+
 
 # ── Tier 4: the schema-keyed canonical-v1 dataset handler ───────────
 
@@ -725,6 +852,48 @@ class TestCanonicalHandlerRegularGrid:
         pytest.importorskip("symfluence")
         handler = _handler(tmp_path, FORCING_DATASET="RDRS")
         assert handler.get_merged_file_pattern(2018, 6) == "RDRS_monthly_201806.nc"
+
+    def test_three_hourly_regular_store_keeps_its_time_axis(self, tmp_path):
+        """CARRA/CERRA-class quirk: 3-hourly REGULAR grids pass the per-file
+        regular merge loop untouched (no hourly inflation, wind_speed derived)."""
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+        import pandas as pd
+
+        raw = tmp_path / "raw_data"
+        merged = tmp_path / "merged_path"
+        raw.mkdir()
+        ds = _canonical_dataset(xr, np)
+        times = pd.date_range("2018-06-01", periods=16, freq="3h")  # 2 days, 3-hourly
+        shape = (len(times), ds.sizes["latitude"], ds.sizes["longitude"])
+        ds = ds.isel(time=0, drop=True).expand_dims(time=times).transpose(
+            "time", "latitude", "longitude"
+        ).copy()
+        ds["eastward_wind"] = (
+            ("time", "latitude", "longitude"),
+            np.full(shape, 3.0, dtype="float32"),
+            {"standard_name": "eastward_wind", "units": "m s-1"},
+        )
+        ds["northward_wind"] = (
+            ("time", "latitude", "longitude"),
+            np.full(shape, 4.0, dtype="float32"),
+            {"standard_name": "northward_wind", "units": "m s-1"},
+        )
+        name = "domain_test_domain_cfs_carra_single_levels_20180601_20180602.nc"
+        ds.to_netcdf(raw / name)
+
+        handler = _handler(tmp_path, FORCING_DATASET="CARRA")
+        handler.merge_forcings(raw, merged, 2018, 2018)
+
+        out = merged / name  # regular path keeps the raw filename
+        assert out.exists(), sorted(p.name for p in merged.iterdir())
+        with xr.open_dataset(out) as got:
+            assert got.sizes["time"] == 16  # 3-hourly axis NOT inflated
+            step = np.diff(got["time"].values).astype("timedelta64[h]")
+            assert (step == np.timedelta64(3, "h")).all()
+            assert "wind_speed" in got.data_vars
+            assert float(got["wind_speed"].isel(time=0, latitude=0, longitude=0)) == pytest.approx(5.0)
 
 
 class TestCanonicalHandlerProjectedGrid:

@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Four newly parity-gated SYMFLUENCE datasets** (live experiments
+  2026-06-12, both sides reading the same upstream archives; campaign
+  completed across three sessions with the CDS legs resumed by request ID):
+  - `CARRA` → `carra:single_levels` (exp11: `value-identical:grib-repack` —
+    time bitwise; every field differs only by CDS/MARS re-encoding the GRIB
+    per request — the native handler pads the area ±0.1°, so the 16-bit
+    packing anchors differ (verified quantization combs: T on 2⁻¹⁵ K, p on
+    2⁻⁷ Pa, offset anchors); plus the documented specific-humidity ε
+    derivation, ≤ 5.5e-5 rel). Arctic-only spatial domain; the native
+    `CARRA_DOMAIN` key drives the CDS west/east domain split.
+  - `CERRA` → `cerra:single_levels` (exp12: same `grib-repack` grade;
+    pressure + time bitwise). Europe-only; archive ends 2021-06-30. CERRA
+    publishes a combined 10 m wind speed, so no u/v components are claimed.
+  - `HRRR` → `hrrr:sfc_anl` (exp14: `bit-identical` — all 7 analysis
+    variables + time bitwise on the overlaid window; 2-D lat/lon differ
+    ≤ 3.9e-6° because the native handler *recomputes* them with pyproj while
+    CFS reads the archive's published grid arrays). Hourly 3 km LCC from the
+    public hrrrzarr S3 archive; the analysis stream has no precipitation on
+    either side. Native-side finding from the campaign: the native bbox
+    windowing no-ops (the hrrrzarr variable groups carry no latitude
+    coordinate to mask on), so the native handler downloads the **full CONUS
+    grid** (~1.3 GB/day, 42 min for the 1-day experiment) where the community
+    fetch windows to the bbox (96 s). CONUS-only; legacy `HRRR_VARS` key
+    translated.
+  - `DAYMET` → `daymet:daily_v4` (exp16: `bit-identical:point-sampled` —
+    all four canonical derivations recomputed in float32 from the raw daily
+    values served by ORNL's single-pixel API (the native handler's own point
+    route) are bitwise identical to the community artifact at every sampled
+    cell, with exact containing-cell LCC identity; the *qualifier* records
+    that the full-grid raw comparison was blocked by a NASA Hyrax outage on
+    campaign day — every `.dods` request hit 120-s read timeouts or 404/500.
+    Native-side findings: the native gridded OPeNDAP route slices the
+    descending Daymet y axis with an ascending slice and returns empty
+    subsets (it cannot produce gridded data at all), and there is no
+    THREDDS-NCSS alternative path in the handler. Daily 1 km LCC,
+    North-America-only; legacy `DAYMET_VARIABLES` key translated.
+- **Spatial domains on capabilities** (`DatasetSpec.spatial`, minimal honest
+  extension): regional datasets refuse out-of-domain bboxes at `acquire()`
+  time with a plain `AcquisitionError` — deliberately not a
+  decline-and-fallback, because the limit is a property of the dataset (no
+  backend can serve CARRA south of 55°N). Moves to selection time if/when the
+  contract's `DatasetCapability` grows a spatial field.
+
 - **Three newly parity-gated SYMFLUENCE datasets** (live experiments
   2026-06-12, both sides reading the same upstream archives):
   - `CONUS404` → `conus404:hourly` (HyTEST OSN Zarr; exp13:
@@ -40,6 +83,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are filled at the native step. Hermetic grid-family tests added for the
   LCC `y`/`x` layout (process/merge/shapefile) and the daily-LCC Daymet
   layout (no hourly inflation; gap restore at the daily step).
+
+### Fixed
+
+- **CERRA longwave silently missing** (`connectors/cerra.py`): the connector
+  requested the CARRA-style CDS variable name
+  `thermal_surface_radiation_downwards`; the CERRA form only knows the
+  ERA5-style `surface_thermal_radiation_downwards`, and CDS **silently
+  drops** unknown names instead of rejecting the request, so CERRA fetches
+  delivered no `surface_downwelling_longwave_flux` (and no warning). Caught
+  by the exp12 parity run — the same bug exists in the native SYMFLUENCE
+  CERRA handler, where the required-variable validation then hard-fails, so
+  native CERRA acquisition cannot complete at all. Fixed name live-verified.
 
 ### Changed
 

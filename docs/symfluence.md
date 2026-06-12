@@ -52,6 +52,14 @@ Failures are mapped onto the protocol error taxonomy
 so the framework's retry/fallback logic keys off exception classes, never
 message text.
 
+**Spatial domains:** regional datasets (CARRA Arctic-only, CERRA Europe-only,
+HRRR CONUS-only, Daymet North-America-only) refuse an out-of-domain bbox at
+`acquire()` time with a plain `AcquisitionError` naming the domain. This is
+deliberately *not* a decline-and-fallback: the limit is a property of the
+dataset itself — no backend can serve CARRA south of the Arctic — so failing
+loudly beats a doomed native retry. (The `DatasetCapability` contract has no
+spatial field yet; when it grows one, this check moves to selection time.)
+
 ## The capability table (parity-gated)
 
 Only datasets whose native-vs-community output was **live-validated**
@@ -69,6 +77,10 @@ from a non-native backend unless `ALLOW_UNGATED_BACKENDS: true`.
 | `CASR` | `rdrs:casr_v32` | **projected** (rotated pole) | `bit-identical` — alias of the RDRS capability (same ECCC CaSR family / same PAVICS store, see fine print) |
 | `CONUS404` | `conus404:hourly` | **projected** (LCC 4 km) | `value-identical:1ulp` (exp13: T/q/p/u/v + wind_speed bitwise; precip + radiation ≤ 1 float32 ulp; first radiation step differs by design, see fine print) |
 | `NWM3_RETROSPECTIVE` | `aorc_nwm:conus_1km` | **projected** (LCC 1 km) | `bit-identical` (exp15: all 8 variables + 2-D lat/lon + time bitwise; precip convention differs — flux vs ×3600 accumulation, value-equivalent) |
+| `CARRA` | `carra:single_levels` | regular lat/lon (CDS-interpolated) | `value-identical:grib-repack` (exp11: time bitwise; every field differs only by CDS's per-request GRIB re-packing + the documented q-epsilon derivation, see fine print). **Arctic-only** (≥ 55°N); `CARRA_DOMAIN` selects the west/east CDS split |
+| `CERRA` | `cerra:single_levels` | regular lat/lon (CDS-interpolated) | `value-identical:grib-repack` (exp12: pressure + time bitwise, rest grib-repack/q-epsilon; **longwave is community-only** — the native handler requests a CDS variable name CERRA doesn't have, see fine print). **Europe-only**; archive ends 2021-06-30 |
+| `HRRR` | `hrrr:sfc_anl` | **projected** (LCC 3 km) | `bit-identical` (exp14: all 7 analysis variables + time bitwise; 2-D lat/lon ≤ 3.9 × 10⁻⁶ ° — native recomputes them with pyproj, CFS reads the published grid arrays). **No precipitation** in the analysis stream (either side). **CONUS-only** |
+| `DAYMET` | `daymet:daily_v4` | **projected** (daily LCC 1 km) | `bit-identical:point-sampled` (exp16: all four canonical derivations bitwise vs the raw values from the native single-pixel route at every sampled cell; full-grid comparison blocked by a NASA Hyrax outage on campaign day, see fine print). Daily noon-anchored. **North-America-only** |
 | `CFS` | from `options={'product': …}` / `CFS_PRODUCT` | varies | *ungraded* (`None`) — exercises the ungated policy |
 
 **ERA5 fine print:** both sides read the same ARCO Zarr bytes. Instantaneous
@@ -103,6 +115,59 @@ preprocessing back-fills the first step from step 2 — so the *first timestep
 of a fetch* differs (community is the physically correct increment). All
 later steps agree to ≤ 1 float32 ulp (`/3600` vs `*(1/3600)` op order, same
 as precipitation).
+
+**CARRA/CERRA fine print (the `grib-repack` grade):** both sides submit CDS
+requests against the same datasets with the same server-side `grid`
+interpolation, but the native handler pads the area ±0.1° (CARRA also uses
+0–360 longitudes) while CFS requests the exact bbox. CDS/MARS re-encodes the
+GRIB **per request**, so the 16-bit simple-packing reference/scale are
+computed over different field min/max and the decoded float32 values sit on
+*offset quantization lattices* (verified: air temperature on a 2⁻¹⁵ K comb
+and pressure on a 2⁻⁷ Pa comb on both sides, different anchors). Differences
+are bounded by a few packing quanta — T ≤ 2.4 × 10⁻⁴ K, p ≤ 0.18 Pa, fluxes
+≤ 1.6 × 10⁻⁴ relative — and CERRA's pressure came out bitwise (same field
+extremes in both areas). On top of that, `specific_humidity` carries the
+documented derivation difference (native ε = 0.622 with `P − 0.378e`; CFS
+ε = 0.62198 with `P − (1−ε)e`): ≤ 5.5 × 10⁻⁵ relative. Nothing else differs.
+
+**CERRA longwave caveat:** the CERRA CDS form names downwelling longwave
+`surface_thermal_radiation_downwards` (ERA5-style), while CARRA names it
+`thermal_surface_radiation_downwards`. The native SYMFLUENCE handler requests
+the CARRA-style name for **both** datasets; CDS **silently drops** the unknown
+name (live request `99dc24ae…` returned only `tp`+`ssrd`), after which the
+native handler's required-variable validation hard-fails — i.e. native CERRA
+acquisition cannot complete at all on the validated branch. CFS requested the
+same wrong name until this campaign caught it (`connectors/cerra.py` fixed,
+live-verified); community CERRA therefore delivers all 7 variables, with
+longwave necessarily ungraded against a native reference (it is produced by
+the same fixed request/decode path as the six graded variables).
+
+**HRRR fine print:** both sides read the same hrrrzarr float16 chunks
+(upcast to float32): all 7 analysis variables and the time axis are bitwise
+identical. The 2-D lat/lon coordinates differ by ≤ 3.9 × 10⁻⁶ ° (~0.4 m)
+because the native handler *recomputes* them with a pyproj LCC transform
+while CFS reads the archive's published `grid/HRRR_chunk_index.zarr` arrays.
+Campaign finding on the native side: its bbox windowing no-ops (the hrrrzarr
+variable groups carry no latitude coordinate to mask on), so the native
+handler downloads the full CONUS grid (~1.3 GB/day; 42 min for the 1-day
+experiment vs 96 s for the windowed community fetch).
+
+**DAYMET fine print:** the `point-sampled` qualifier is deliberate honesty:
+on campaign day NASA Hyrax answered every OPeNDAP data request with 120-s
+read timeouts and intermittent 404/500s, so the full-grid raw comparison
+could not complete. The banked evidence: all four canonical derivations
+(`T=(tmax+tmin)/2+273.15`, `precip=prcp/86400`, `SW=srad·dayl/86400`,
+`dewpoint=inverse-Bolton(vp)`) recomputed in float32 from the raw daily
+values served by ORNL's **single-pixel API** — the native handler's own
+point route, healthy and independent of Hyrax — are bitwise identical to the
+community canonical artifact at every sampled cell (5 cells × 14 days), and
+the API-reported containing-cell LCC x/y matches the canonical store's cell
+coordinates to ≤ 0.3 m. Native-side findings: the native *gridded* OPeNDAP
+route slices the descending Daymet `y` axis with an ascending slice and so
+returns empty subsets for every variable — it cannot produce gridded data at
+all on the validated branch — and its OPeNDAP URL is `https://`-hardcoded
+(fails under libnetcdf ≥ 4.10 probing); there is no THREDDS-NCSS fallback
+(ORNL's legacy THREDDS endpoint now 404s into the same DMR++ backend).
 
 **Excluded:** `MSWEP` and `EM-EARTH` are *not claimed* until live parity
 validation is possible (blocked: no rclone Google Drive remote for MSWEP; the

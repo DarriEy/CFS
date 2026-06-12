@@ -48,6 +48,18 @@ def test_carra_domain_override():
     assert req["domain"] == "east_domain"
 
 
+def test_longwave_cds_names_differ_between_carra_and_cerra():
+    """Live-confirmed (2026-06-12 parity campaign): CARRA's CDS form names
+    downwelling longwave `thermal_surface_radiation_downwards`, CERRA's names
+    it `surface_thermal_radiation_downwards` — and CDS SILENTLY DROPS unknown
+    variable names instead of rejecting the request, so the wrong name yields
+    files with no longwave. Pin both."""
+    carra_lw = [v.request_name for v in CARRAConnector.forecast_vars if v.nc_name == "strd"]
+    cerra_lw = [v.request_name for v in CERRAConnector.forecast_vars if v.nc_name == "strd"]
+    assert carra_lw == ["thermal_surface_radiation_downwards"]
+    assert cerra_lw == ["surface_thermal_radiation_downwards"]
+
+
 def test_cerra_request_has_data_type_no_domain():
     req = CERRAConnector()._build_request("analysis", BBOX, 2020, 1, ["2m_temperature"], ["01"])
     assert req["data_type"] == "reanalysis"

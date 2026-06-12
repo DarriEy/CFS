@@ -194,6 +194,15 @@ class DatasetSpec(NamedTuple):
             (``wind_speed``, ERA5 ``specific_humidity``) or dropped loudly.
         auth: Auth-provider ids required (contract vocabulary).
         temporal: Declared coverage ``[start, end)`` or ``None``.
+        spatial: Spatial domain ``(west, south, east, north)`` in degrees, or
+            ``None`` for (effectively) global products. Regional datasets
+            (CARRA is Arctic-only, CERRA Europe-only, HRRR CONUS-only, Daymet
+            North-America-only) refuse out-of-domain bboxes at ``acquire()``
+            time with a clear error: the limit is a property of the *dataset*,
+            not of this backend, so there is nothing to fall back to. (The
+            AcquisitionBackend contract has no spatial capability field yet,
+            so selection cannot decline on bbox; this is the minimal honest
+            check until it does.)
         parity: Parity grade vs the native pipeline (``None`` = ungated; the
             framework refuses ungated datasets unless ALLOW_UNGATED_BACKENDS).
         variables_key: Legacy flat config key holding a native variable list.
@@ -210,6 +219,7 @@ class DatasetSpec(NamedTuple):
     fetchable: frozenset[str]
     auth: frozenset[str]
     temporal: tuple[str, str] | None
+    spatial: tuple[float, float, float, float] | None
     parity: str | None
     variables_key: str | None
     native_to_canonical: dict[str, str] | None
@@ -238,6 +248,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         }),
         auth=frozenset(),
         temporal=None,
+        spatial=None,
         parity="value-identical:2ulp",
         variables_key=None,
         native_to_canonical=None,
@@ -257,6 +268,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         fetchable=_STANDARD_8,
         auth=frozenset({"earthdata"}),
         temporal=None,
+        spatial=None,
         parity="value-identical:1ulp",
         variables_key="NLDAS_VARIABLES",
         native_to_canonical=_NLDAS_TO_CANONICAL,
@@ -271,6 +283,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         fetchable=_STANDARD_8,
         auth=frozenset(),
         temporal=("2002-02-01", "2100-01-01"),
+        spatial=None,
         parity="bit-identical",
         variables_key=None,
         native_to_canonical=None,
@@ -297,6 +310,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         }),
         auth=frozenset(),
         temporal=None,
+        spatial=None,
         parity="bit-identical",
         variables_key="NEX_VARIABLES",
         native_to_canonical=_NEX_TO_CANONICAL,
@@ -315,6 +329,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         fetchable=_STANDARD_8 | {"dewpoint_temperature"},
         auth=frozenset(),
         temporal=("1980-01-01", "2025-01-01"),
+        spatial=None,
         parity="bit-identical",
         variables_key=None,
         native_to_canonical=None,
@@ -335,6 +350,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         fetchable=_STANDARD_8 | {"dewpoint_temperature"},
         auth=frozenset(),
         temporal=("1980-01-01", "2025-01-01"),
+        spatial=None,
         parity="bit-identical",
         variables_key=None,
         native_to_canonical=None,
@@ -357,6 +373,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         fetchable=_STANDARD_8 | {"dewpoint_temperature"},
         auth=frozenset(),
         temporal=("1979-10-01", "2022-10-01"),
+        spatial=None,
         parity="value-identical:1ulp",
         variables_key=None,
         native_to_canonical=None,
@@ -379,6 +396,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         fetchable=_STANDARD_8,
         auth=frozenset(),
         temporal=("1979-02-01", "2023-02-01"),
+        spatial=None,
         parity="bit-identical",
         variables_key="NWM3_VARIABLES",
         native_to_canonical=_NWM3_TO_CANONICAL,
@@ -393,6 +411,132 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         ),
     ),
     DatasetSpec(
+        family="CARRA",
+        dataset_ids=("CARRA",),
+        product="carra:single_levels",
+        grid="regular_latlon",
+        variables=_STANDARD_8 | {"wind_speed"},
+        fetchable=_STANDARD_8,
+        auth=frozenset({"cds"}),
+        temporal=("1990-09-01", "2100-01-01"),
+        spatial=(-180.0, 55.0, 180.0, 90.0),
+        parity="value-identical:grib-repack",
+        variables_key=None,
+        native_to_canonical=None,
+        notes=(
+            "Copernicus Arctic Regional Reanalysis via CDS, 3-hourly, "
+            "CDS-interpolated to a regular 0.025-deg grid on both sides (the "
+            "native handler requests the same `grid` interpolation). exp11: "
+            "time bitwise; every field differs only by the CDS/MARS per-"
+            "request GRIB re-packing (the native handler pads the area "
+            "+-0.1 deg, so the 16-bit packing anchors differ; verified "
+            "quantum combs; T <= 1.9e-4 K, p <= 0.18 Pa, fluxes <= 1.6e-4 "
+            "rel) plus the documented specific-humidity epsilon derivation "
+            "(<= 4.7e-5 rel). Arctic-only (>= 55N); the CDS domain split "
+            "(west_domain default / east_domain) follows the native "
+            "CARRA_DOMAIN key. Upper coverage bound is nominal (rolling "
+            "archive, ~2-3 month latency)."
+        ),
+    ),
+    DatasetSpec(
+        family="CERRA",
+        dataset_ids=("CERRA",),
+        product="cerra:single_levels",
+        grid="regular_latlon",
+        variables=(_STANDARD_8 - {"eastward_wind", "northward_wind"}) | {"wind_speed"},
+        fetchable=(_STANDARD_8 - {"eastward_wind", "northward_wind"}) | {"wind_speed"},
+        auth=frozenset({"cds"}),
+        temporal=("1984-09-01", "2021-07-01"),
+        spatial=(-58.0, 20.0, 74.0, 74.0),
+        parity="value-identical:grib-repack",
+        variables_key=None,
+        native_to_canonical=None,
+        notes=(
+            "Copernicus European Regional Reanalysis via CDS, 3-hourly, "
+            "CDS-interpolated to a regular 0.05-deg grid on both sides. "
+            "CERRA publishes a combined 10m wind speed (no u/v components). "
+            "exp12: pressure + time bitwise; the rest differs only by the "
+            "per-request GRIB re-packing + the q epsilon derivation (same "
+            "causes as CARRA). LONGWAVE CAVEAT: the native handler requests "
+            "the CARRA-style CDS name 'thermal_surface_radiation_downwards', "
+            "which CDS silently drops for CERRA, so native CERRA acquisition "
+            "cannot complete at all on the validated SYMFLUENCE branch; CFS "
+            "requests the correct 'surface_thermal_radiation_downwards' and "
+            "delivers all 7 variables (community-only, no native reference "
+            "for longwave). Europe-only; archive ENDS 2021-06-30."
+        ),
+    ),
+    DatasetSpec(
+        family="HRRR",
+        dataset_ids=("HRRR",),
+        product="hrrr:sfc_anl",
+        grid="projected",
+        variables=(_STANDARD_8 - {"precipitation_flux"}) | {"wind_speed"},
+        fetchable=_STANDARD_8 - {"precipitation_flux"},
+        auth=frozenset(),
+        temporal=("2016-08-24", "2100-01-01"),
+        spatial=(-134.1, 21.1, -60.9, 52.6),
+        parity="bit-identical",
+        variables_key="HRRR_VARS",
+        native_to_canonical=_HRRR_TO_CANONICAL,
+        notes=(
+            "NOAA HRRR analysis stream (public hrrrzarr S3 archive — the "
+            "same per-variable Zarr groups the native handler reads), hourly "
+            "3 km LCC y/x grid. exp14: all 7 variables + time bitwise on the "
+            "overlaid window (same float16 chunks upcast to float32). The "
+            "2-D lat/lon differ <= 3.9e-6 deg (~0.4 m): the native handler "
+            "RECOMPUTES them with pyproj while CFS reads the archive's "
+            "published grid arrays. The analysis stream carries NO "
+            "precipitation on either side (CFS's separate hrrr:sfc_fcst "
+            "product stays unclaimed). Native-side note: the native bbox "
+            "windowing no-ops (the variable groups carry no latitude "
+            "coordinate), so native downloads full CONUS (~1.3 GB/day) where "
+            "the community fetch windows server-cheaply. CONUS only; upper "
+            "coverage bound is nominal (rolling archive)."
+        ),
+    ),
+    DatasetSpec(
+        family="DAYMET",
+        dataset_ids=("DAYMET",),
+        product="daymet:daily_v4",
+        grid="projected",
+        variables=frozenset({
+            "air_temperature", "precipitation_flux",
+            "surface_downwelling_shortwave_flux",
+        }),
+        fetchable=frozenset({
+            "air_temperature", "precipitation_flux",
+            "surface_downwelling_shortwave_flux", "dewpoint_temperature",
+        }),
+        auth=frozenset({"earthdata"}),
+        temporal=("1980-01-01", "2024-01-01"),
+        spatial=(-179.0, 14.0, -52.0, 83.0),
+        parity="bit-identical:point-sampled",
+        variables_key="DAYMET_VARIABLES",
+        native_to_canonical=_DAYMET_TO_CANONICAL,
+        notes=(
+            "ORNL Daymet V4R1 DAILY 1 km LCC (NASA Hyrax OPeNDAP — the same "
+            "granules the native handler targets). Canonical fields are "
+            "derived from the raw daily variables with the documented "
+            "formulas (T = (tmax+tmin)/2 + 273.15; precip flux = prcp/86400; "
+            "SW = srad*dayl/86400 daily mean; dewpoint = inverse-Bolton(vp)). "
+            "North America only; daily noon-anchored time axis (the "
+            "canonical-v1 handler keeps it daily). Declared coverage ends at "
+            "the last live-verified complete year (2023); the archive is "
+            "extended annually — bump after verification. exp16: all four "
+            "derivations recomputed in float32 from the raw values served by "
+            "ORNL's single-pixel API (the native handler's own point route) "
+            "are BITWISE identical to the canonical artifact at every "
+            "sampled cell, with exact containing-cell LCC identity; the "
+            "full-grid raw comparison was blocked by a NASA Hyrax outage on "
+            "campaign day (hence the point-sampled qualifier). NATIVE-SIDE "
+            "NOTE: the native gridded OPeNDAP route slices the descending "
+            "Daymet y axis with an ascending slice and returns empty "
+            "subsets — it cannot produce gridded data at all on the "
+            "validated branch (and has no THREDDS-NCSS alternative)."
+        ),
+    ),
+    DatasetSpec(
         family="CFS",
         dataset_ids=("CFS",),
         product=None,  # from options={'product': ...} or the CFS_PRODUCT key
@@ -401,6 +545,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         fetchable=frozenset(),  # unknown until the product is named
         auth=frozenset(),
         temporal=None,
+        spatial=None,
         parity=None,  # UNGATED by design: any CFS product, no parity claim
         variables_key="CFS_VARIABLES",
         native_to_canonical=None,
@@ -566,6 +711,7 @@ class CommunityForcingBackend:
 
         window = self._window(request, spec)
         bbox = self._bbox(request)
+        self._check_spatial(spec, bbox)
 
         if spec.family == "NEX-GDDP":
             paths, delivered, warnings, provenance = self._acquire_nex(request, spec, target_dir, window, bbox)
@@ -732,6 +878,12 @@ class CommunityForcingBackend:
 
     def _resolve_product(self, request, spec) -> tuple[str, dict | None]:
         """Resolve the CFS product id (+ connector config) for a request."""
+        if spec.family == "CARRA":
+            # The CDS Arctic split follows the native CARRA_DOMAIN key
+            # (west_domain default — the connector's own default too).
+            options = dict(request.options or {})
+            domain = options.get("domain") or _cfg(self.config, "CARRA_DOMAIN")
+            return cast(str, spec.product), ({"domain": str(domain)} if domain else None)
         if spec.product is not None:
             return spec.product, None
         # Parallel-name 'CFS' entry: product from options or the legacy key.
@@ -773,6 +925,29 @@ class CommunityForcingBackend:
                     coverage=spec.temporal,
                 )
         return start, end
+
+    def _check_spatial(self, spec, bbox: tuple[float, float, float, float]) -> None:
+        """Refuse bboxes outside a regional dataset's spatial domain.
+
+        The domain limit is a property of the *dataset* (CARRA data simply
+        does not exist south of the Arctic), not of this backend — no backend
+        can serve such a request, so this raises a plain ``AcquisitionError``
+        rather than a decline-and-fallback class. The contract's
+        ``DatasetCapability`` has no spatial field yet, so the check has to
+        live here at ``acquire()`` time.
+        """
+        if spec.spatial is None:
+            return
+        west, south, east, north = spec.spatial
+        req_w, req_s, req_e, req_n = bbox
+        if req_w < west or req_e > east or req_s < south or req_n > north:
+            raise _errors.AcquisitionError(
+                f"{spec.family}: bbox (W={req_w}, S={req_s}, E={req_e}, N={req_n}) is "
+                f"outside the dataset's spatial domain (W={west}, S={south}, E={east}, "
+                f"N={north}). This is a property of the dataset itself, not of the "
+                "community backend — no backend can serve it; choose a dataset that "
+                "covers your domain."
+            )
 
     def _bbox(self, request) -> tuple[float, float, float, float]:
         """Contract bbox (lat_min, lon_min, lat_max, lon_max) -> CFS (W, S, E, N)."""

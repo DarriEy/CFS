@@ -173,7 +173,12 @@ account.
 - **`carra` / `cerra`** — delivered interpolated to a **regular grid** via
   the CDS `grid` parameter (the native grids are projected). Both ship 2 m RH
   rather than specific humidity, so `specific_humidity` is derived
-  (Bolton 1980).
+  (Bolton 1980). Live-confirmed naming trap: downwelling longwave is
+  `thermal_surface_radiation_downwards` on the **CARRA** form but
+  `surface_thermal_radiation_downwards` (ERA5-style) on the **CERRA** form —
+  and CDS *silently drops* an unknown variable name instead of rejecting the
+  request, so getting this wrong yields files with no longwave (caught and
+  fixed in the 2026-06-12 parity campaign).
 - **`wfde5`** — needs the required CDS `product` token (`wfde5`) and an
   underscore `version` (`2_1`), confirmed against the live form constraints.
   Downloads full half-degree monthly NetCDFs (one CDS request per variable;
