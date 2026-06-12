@@ -78,12 +78,48 @@ synthetic data but a live fetch is pending access (see the notes below).
   reached through the external `rclone` CLI. The connector's path and
   conversion logic are verified offline (with a clear setup error otherwise);
   a real fetch needs `rclone` plus a configured Drive remote with granted
-  access.
+  access. Exact unblock sequence:
+
+    1. register at <https://www.gloh2o.org/mswep/> (free for non-commercial
+       use) with the Google account you will use for Drive;
+    2. wait for the GloH2O confirmation email — it shares the `MSWEP_V*`
+       Drive folders with that account ("Shared with me");
+    3. install rclone and run `rclone config` → new remote, name
+       **`GoogleDrive`** (the connector default; override via
+       `MSWEP_RCLONE_REMOTE`), type `drive`, default scopes, browser auth
+       with the same account;
+    4. verify with `rclone lsd --drive-shared-with-me GoogleDrive:` (the
+       `MSWEP_V316` folder should list);
+    5. run the prepared validation script
+       (`/tmp/parity-exp/validate_mswep_when_unblocked.sh`) to exercise the
+       doc-fixed paths on both the CFS and SYMFLUENCE sides and record a
+       parity grade.
 - **`em_earth`** — the S3 bucket **denies anonymous reads** (allows listing
   only), so it needs AWS credentials (`config={"anon": False}`).
   Offline-verified. Its daily `prcp` units are **unverified** (assumed
   mm/day); every precipitation fetch carries an explicit warning, since
   range-QC cannot catch a precipitation unit error.
+
+    The authoritative public archive is FRDR (DOI `10.20383/102.0547`,
+    dataset `8d30ab02-f2bd-4d05-ae43-11f4a387e5ad`), and it was probed
+    (2026-06-12) for a credential-free pathway: the landing page offers
+    exactly two mechanisms — **(a) Globus transfer** from collection
+    `515c70c4-2eb8-4f2a-b406-7959b5edc28d`, path
+    `/6/published/publication_542/submitted_data`, and **(b) "Download as
+    Zip"**, which is an email-gated request (you submit an address, FRDR
+    mails a link to a packaged archive of the dataset). There is **no
+    per-file HTTPS endpoint**, so no `frdr` source option exists on this
+    connector. To stage EM-Earth via Globus:
+
+    1. get a (free) Globus account — institutional or Globus ID;
+    2. install Globus Connect Personal (or use an institutional endpoint);
+    3. open the collection link from the FRDR landing page
+       (`globus.frdr.ca/file-manager?origin_id=515c70c4-2eb8-4f2a-b406-7959b5edc28d&origin_path=/6/published/publication_542/submitted_data`);
+    4. transfer the `deterministic_raw_daily` (or hourly) folders you need to
+       your endpoint;
+    5. point downstream tooling at the staged files (SYMFLUENCE:
+       `EM_EARTH_*` paths; the CFS connector's S3 route additionally needs
+       bucket credentials, which remain a separate blocker).
 
 ### Forecasts
 

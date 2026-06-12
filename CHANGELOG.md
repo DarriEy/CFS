@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Three newly parity-gated SYMFLUENCE datasets** (live experiments
+  2026-06-12, both sides reading the same upstream archives):
+  - `CONUS404` → `conus404:hourly` (HyTEST OSN Zarr; exp13:
+    `value-identical:1ulp` — T/q/p/u/v + derived wind_speed bitwise, precip
+    and radiation ≤ 1 float32 ulp from `/3600` vs `*(1/3600)` op order; the
+    first radiation step differs by design — native back-fills it from
+    step 2, the community pipeline de-accumulates against a real pre-window
+    hour). Declares WY1980–WY2022 coverage (`WindowOutOfRange` outside it).
+  - `NWM3_RETROSPECTIVE` → `aorc_nwm:conus_1km` (NWM v3.0 retrospective
+    forcing Zarr; exp15: `bit-identical` — all 8 variables + 2-D lat/lon +
+    time bitwise; canonical precipitation is a flux while the native file
+    ships the identical values ×3600 as hourly accumulation,
+    value-equivalent). Serves the `forcing` output type only; declares
+    1979-02 – 2023-01 coverage. Legacy `NWM3_VARIABLES` key translated.
+  - `CASR` → `rdrs:casr_v32` as an **alias capability** (no new connector):
+    the CASR identity investigation concluded SYMFLUENCE's CASR is the same
+    ECCC CaSR product family as RDRS — natively it is MAF/datatool-only
+    (HPC-prestaged CaSR **v3.1**, RPN names like `CaSR_v3.1_P_TT_1.5m`),
+    the PAVICS THREDDS catalog publishes **only CaSR v3.2** (hourly + daily
+    NCML; no v3.1/v2.x variants), and that v3.2 store is exactly what the
+    `rdrs` connector reads (bitwise vs the native `RDRSAcquirer`, exp10;
+    `casr_utils` explicitly consumes that consolidated layout too). The
+    capability notes document that the community backend serves v3.2.
+- **`CanonicalV1Handler` projected-grid generalization**: the monthly-split
+  merge now rebuilds each month's time axis at the store's *native step*
+  (median time diff) instead of a hard-coded hourly axis — hourly stores
+  (RDRS/CONUS404/HRRR/NWM3) keep the exact native full-month behaviour,
+  daily stores (Daymet) stay daily and keep their noon anchoring, and gaps
+  are filled at the native step. Hermetic grid-family tests added for the
+  LCC `y`/`x` layout (process/merge/shapefile) and the daily-LCC Daymet
+  layout (no hourly inflation; gap restore at the daily step).
+
+### Changed
+
+- **SYMFLUENCE protocol target bumped to 0.2.0**: the framework's contract
+  bump added the observation flavour (`ObservationBackend` et al.) and left
+  the `AcquisitionBackend` surface untouched (verified against the contract
+  diff); `TARGET_INTERFACE_VERSION` re-targeted so the backend registers
+  again under the pre-1.0 minor-is-breaking rule.
+
+### Documented
+
+- **EM-Earth / FRDR access mechanics** (probed 2026-06-12): the FRDR archive
+  (DOI 10.20383/102.0547) offers only a Globus transfer (collection
+  `515c70c4-2eb8-4f2a-b406-7959b5edc28d`) and an email-gated whole-dataset
+  zip — **no per-file HTTPS**, so no `frdr` source option was added to the
+  `em_earth` connector; the Globus staging steps are documented in the
+  catalog notes.
+- **MSWEP unblock sequence** (GloH2O registration → Drive share → rclone
+  `GoogleDrive` remote) documented step-by-step in the catalog notes, with a
+  ready-to-run two-sided validation script staged at
+  `/tmp/parity-exp/validate_mswep_when_unblocked.sh`.
+
 ## [0.3.0] — 2026-06-11
 
 ### Added

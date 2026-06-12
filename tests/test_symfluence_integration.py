@@ -198,6 +198,48 @@ def _projected_canonical_dataset(xr, np, n_times=72):
     )
 
 
+def _lcc_canonical_dataset(xr, np, n_times=72, freq="h", n_y=4, n_x=5):
+    """Synthetic canonical-v1 PROJECTED dataset (Lambert-conformal layout).
+
+    Mirrors the canonical CONUS404 / HRRR / NWM3 layout: native ``y``/``x``
+    dims carrying 1-D projected-metre coordinates, 2-D ``latitude``/
+    ``longitude`` auxiliary coordinates. With ``freq="D"`` (and noon-anchored
+    timestamps) it doubles as the Daymet daily layout, which shares the same
+    grid family (1-D LCC x/y + 2-D lat/lon).
+    """
+    import pandas as pd
+
+    anchor = "2018-06-01 12:00" if freq == "D" else "2018-06-01"
+    times = pd.date_range(anchor, periods=n_times, freq=freq)
+    y = (np.arange(n_y) * 4000.0 + 100000.0).astype("float64")
+    x = (np.arange(n_x) * 4000.0 - 500000.0).astype("float64")
+    lat2d = (39.5 + np.add.outer(np.arange(n_y) * 0.036, np.arange(n_x) * 0.003)).astype("float32")
+    lon2d = (-105.5 + np.add.outer(np.arange(n_y) * 0.004, np.arange(n_x) * 0.045)).astype("float32")
+    shape = (len(times), n_y, n_x)
+
+    def var(value, units, name):
+        data = np.full(shape, value, dtype="float32")
+        return (("time", "y", "x"), data, {"standard_name": name, "units": units})
+
+    return xr.Dataset(
+        {
+            "air_temperature": var(281.0, "K", "air_temperature"),
+            "precipitation_flux": var(3e-5, "kg m-2 s-1", "precipitation_flux"),
+            "eastward_wind": var(3.0, "m s-1", "eastward_wind"),
+            "northward_wind": var(4.0, "m s-1", "northward_wind"),
+            "surface_downwelling_shortwave_flux": var(220.0, "W m-2", "rsds"),
+        },
+        coords={
+            "time": times,
+            "y": y,
+            "x": x,
+            "latitude": (("y", "x"), lat2d),
+            "longitude": (("y", "x"), lon2d),
+        },
+        attrs={"cfs_schema": "canonical-v1"},
+    )
+
+
 def _fetch_result(variables, product_id="fake:demo", provider="fake"):
     from cfs.core.models import BoundingBox, FetchResult, TimeRange
 
@@ -293,10 +335,41 @@ class TestCapabilities:
         assert caps["RDRS"].parity_grade == "bit-identical"
         assert caps["CFS"].parity_grade is None  # ungated by design
 
+        # 2026-06-12 campaign additions (exp13/exp15 + the CASR identity work).
+        assert caps["CONUS404"].parity_grade == "value-identical:1ulp"
+        assert caps["NWM3_RETROSPECTIVE"].parity_grade == "bit-identical"
+        assert caps["CASR"].parity_grade == "bit-identical"
+
         assert caps["RDRS"].grid_class is GridClass.PROJECTED
+        assert caps["CONUS404"].grid_class is GridClass.PROJECTED
+        assert caps["NWM3_RETROSPECTIVE"].grid_class is GridClass.PROJECTED
+        assert caps["CASR"].grid_class is GridClass.PROJECTED
         assert caps["ERA5"].grid_class is GridClass.REGULAR_LATLON
         # aliases are requestable directly
         assert {"NLDAS2", "NLDAS-2", "NEX-GDDP", "RDRS_v3.1"} <= set(caps)
+
+    def test_casr_is_an_alias_of_the_rdrs_product(self, tmp_path):
+        """CASR maps onto the same CFS product as RDRS (same ECCC CaSR store)."""
+        from cfs.integrations.symfluence import _spec_for
+
+        casr, rdrs = _spec_for("CASR"), _spec_for("RDRS")
+        assert casr is not None and rdrs is not None
+        assert casr.product == rdrs.product == "rdrs:casr_v32"
+        assert casr.grid == rdrs.grid == "projected"
+
+    def test_coverage_declines_for_new_projected_datasets(self, tmp_path):
+        """Coverage bounds drive WindowOutOfRange declines (native serves those)."""
+        pytest.importorskip("symfluence")
+        from symfluence.data.backends.errors import WindowOutOfRange
+
+        backend = _backend(tmp_path)
+        # CONUS404 ends with WY2022; NWM3 retrospective ends Jan 2023.
+        for dataset, window in (
+            ("CONUS404", ("2023-06-01 00:00", "2023-06-03 00:00")),
+            ("NWM3_RETROSPECTIVE", ("2024-01-01 00:00", "2024-01-02 00:00")),
+        ):
+            with pytest.raises(WindowOutOfRange):
+                backend.acquire(_request(tmp_path, dataset=dataset, window=window))
 
     def test_aorc_declares_post_2002_coverage(self, tmp_path):
         pytest.importorskip("symfluence")
@@ -779,3 +852,138 @@ class TestCanonicalHandlerProjectedGrid:
         assert len(gdf) == n_y * n_x  # 9x9 exp10 grid
         # Interior quads valid; degenerate edge cells match the native port.
         assert int(gdf.geometry.is_valid.sum()) == (n_y - 1) * (n_x - 1)
+
+
+class TestCanonicalHandlerLCCGrid:
+    """The second projected family: LCC y/x dims (CONUS404 / HRRR / NWM3)."""
+
+    def test_lcc_layout_detected_as_projected(self, tmp_path):
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+
+        handler = _handler(tmp_path)
+        assert handler._is_projected(_lcc_canonical_dataset(xr, np, n_times=4))
+
+    def test_process_dataset_derives_wind_speed_on_lcc(self, tmp_path):
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+
+        out = _handler(tmp_path).process_dataset(_lcc_canonical_dataset(xr, np, n_times=4))
+        assert "wind_speed" in out.data_vars
+        assert float(out["wind_speed"].isel(time=0, y=0, x=0)) == pytest.approx(5.0)
+        assert out["air_temperature"].attrs["units"] == "K"
+
+    def test_merge_forcings_splits_lcc_store_monthly(self, tmp_path):
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+
+        raw = tmp_path / "raw_data"
+        merged = tmp_path / "merged_path"
+        raw.mkdir()
+        ds = _lcc_canonical_dataset(xr, np, n_times=72)  # 3 days hourly
+        ds.to_netcdf(raw / "domain_test_domain_cfs_conus404_hourly_20180601_20180603.nc")
+
+        handler = _handler(tmp_path, FORCING_DATASET="CONUS404")
+        handler.merge_forcings(raw, merged, 2018, 2018)
+
+        out = merged / "CONUS404_monthly_201806.nc"
+        assert out.exists(), sorted(p.name for p in merged.iterdir())
+        with xr.open_dataset(out) as monthly:
+            # Hourly store keeps the exact native-pipeline shape: full month.
+            assert monthly.sizes["time"] == 30 * 24
+            assert monthly.sizes["y"] == 4 and monthly.sizes["x"] == 5
+            assert monthly["latitude"].ndim == 2
+            assert "wind_speed" in monthly.data_vars
+            assert not bool(np.isnan(monthly["air_temperature"].values).any())
+
+    def test_create_shapefile_builds_per_cell_polygons_on_lcc(self, tmp_path):
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+        gpd = pytest.importorskip("geopandas")
+
+        merged = tmp_path / "merged_path"
+        merged.mkdir()
+        ds = _lcc_canonical_dataset(xr, np, n_times=4)
+        ds.to_netcdf(merged / "CONUS404_monthly_201806.nc")
+
+        handler = _handler(tmp_path, FORCING_DATASET="CONUS404")
+        shp_dir = tmp_path / "shapefiles"
+        shp_dir.mkdir()
+        out = handler.create_shapefile(
+            shp_dir, merged, tmp_path / "dem.tif",
+            lambda gdf, dem_path, batch_size=50: [1600.0] * len(gdf),
+        )
+
+        gdf = gpd.read_file(out)
+        assert len(gdf) == 4 * 5
+        # Interior cells valid quads from the 2-D lat/lon corners; the last
+        # row/column are the same degenerate edge cells as the native port.
+        assert int(gdf.geometry.is_valid.sum()) == (4 - 1) * (5 - 1)
+        assert gdf.total_bounds[0] == pytest.approx(float(ds["longitude"].min()), abs=1e-5)
+
+
+class TestCanonicalHandlerDaymetGrid:
+    """The daily LCC family (Daymet): same grid class, non-hourly time axis."""
+
+    def test_daily_store_is_not_inflated_to_hourly(self, tmp_path):
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+
+        raw = tmp_path / "raw_data"
+        merged = tmp_path / "merged_path"
+        raw.mkdir()
+        # 14 daily steps anchored at noon (Daymet convention), June 2018.
+        ds = _lcc_canonical_dataset(xr, np, n_times=14, freq="D")
+        ds.to_netcdf(raw / "domain_test_domain_cfs_daymet_daily_v4_20180601_20180614.nc")
+
+        handler = _handler(tmp_path, FORCING_DATASET="DAYMET")
+        handler.merge_forcings(raw, merged, 2018, 2018)
+
+        out = merged / "DAYMET_monthly_201806.nc"
+        assert out.exists(), sorted(p.name for p in merged.iterdir())
+        with xr.open_dataset(out) as monthly:
+            # Daily axis preserved (no hourly reindex/interpolation blow-up)
+            # and the noon anchoring of the store kept.
+            assert monthly.sizes["time"] == 14
+            import pandas as pd
+
+            stamps = pd.to_datetime(monthly["time"].values)
+            assert (stamps.hour == 12).all()
+            assert not bool(np.isnan(monthly["air_temperature"].values).any())
+
+    def test_daily_store_gap_is_filled_at_native_step(self, tmp_path):
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+
+        raw = tmp_path / "raw_data"
+        merged = tmp_path / "merged_path"
+        raw.mkdir()
+        ds = _lcc_canonical_dataset(xr, np, n_times=10, freq="D")
+        ds = ds.isel(time=[0, 1, 2, 4, 5, 6, 7, 8, 9])  # drop day 4 (gap)
+        ds.to_netcdf(raw / "domain_test_domain_cfs_daymet_daily_v4_20180601_20180610.nc")
+
+        handler = _handler(tmp_path, FORCING_DATASET="DAYMET")
+        handler.merge_forcings(raw, merged, 2018, 2018)
+
+        with xr.open_dataset(merged / "DAYMET_monthly_201806.nc") as monthly:
+            assert monthly.sizes["time"] == 10  # gap restored at the daily step
+            assert not bool(np.isnan(monthly["air_temperature"].values).any())
+
+    def test_native_time_step_inference(self, tmp_path):
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+        import pandas as pd
+
+        handler = _handler(tmp_path)
+        hourly = _lcc_canonical_dataset(xr, np, n_times=5)
+        daily = _lcc_canonical_dataset(xr, np, n_times=5, freq="D")
+        assert handler._native_time_step(hourly) == pd.Timedelta(hours=1)
+        assert handler._native_time_step(daily) == pd.Timedelta(days=1)
+        assert handler._native_time_step(hourly.isel(time=[0])) is None

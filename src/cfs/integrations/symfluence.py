@@ -69,7 +69,12 @@ except Exception:  # noqa: BLE001 - any import failure means "not available"
 #: Deliberately hardcoded (not read from the installed framework) so that a
 #: contract bump on the SYMFLUENCE side is *detected* as skew by the selection
 #: layer instead of silently claimed compatible.
-TARGET_INTERFACE_VERSION = "0.1.0"
+#:
+#: 0.2.0 (2026-06-12): the bump added the *observation* flavour
+#: (ObservationBackend/ObservationCapability/ObservationRequest) and left the
+#: AcquisitionBackend surface untouched — verified against the contract diff
+#: before re-targeting.
+TARGET_INTERFACE_VERSION = "0.2.0"
 
 
 #: CFS canonical-v1 variable names -> SYMFLUENCE CFIF names.
@@ -130,6 +135,41 @@ _NEX_TO_CANONICAL: dict[str, str] = {
     "sfcWind": "wind_speed",
     "rsds": "surface_downwelling_shortwave_flux",
     "rlds": "surface_downwelling_longwave_flux",
+}
+
+#: HRRR GRIB short names -> canonical-v1 (legacy ``HRRR_VARS`` config key).
+_HRRR_TO_CANONICAL: dict[str, str] = {
+    "TMP": "air_temperature",
+    "SPFH": "specific_humidity",
+    "PRES": "surface_air_pressure",
+    "UGRD": "eastward_wind",
+    "VGRD": "northward_wind",
+    "DSWRF": "surface_downwelling_shortwave_flux",
+    "DLWRF": "surface_downwelling_longwave_flux",
+}
+
+#: NWM v3.0 retrospective forcing names -> canonical-v1 (``NWM3_VARIABLES``).
+_NWM3_TO_CANONICAL: dict[str, str] = {
+    "T2D": "air_temperature",
+    "Q2D": "specific_humidity",
+    "PSFC": "surface_air_pressure",
+    "U2D": "eastward_wind",
+    "V2D": "northward_wind",
+    "SWDOWN": "surface_downwelling_shortwave_flux",
+    "LWDOWN": "surface_downwelling_longwave_flux",
+    "RAINRATE": "precipitation_flux",
+}
+
+#: Daymet raw names -> canonical-v1 (``DAYMET_VARIABLES``). tmax/tmin/dayl all
+#: collapse onto the canonical field their derivation feeds; ``swe`` has no
+#: canonical counterpart and is dropped loudly.
+_DAYMET_TO_CANONICAL: dict[str, str] = {
+    "tmax": "air_temperature",
+    "tmin": "air_temperature",
+    "prcp": "precipitation_flux",
+    "srad": "surface_downwelling_shortwave_flux",
+    "dayl": "surface_downwelling_shortwave_flux",
+    "vp": "dewpoint_temperature",
 }
 
 
@@ -284,6 +324,72 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
             "2-D lat/lon + time bitwise identical). wind_speed is derived as "
             "hypot(u, v) during preprocessing; it deviates <= 9e-4 m/s from "
             "CaSR's own sfcWind diagnostic (physically negligible, documented)."
+        ),
+    ),
+    DatasetSpec(
+        family="CASR",
+        dataset_ids=("CASR",),
+        product="rdrs:casr_v32",
+        grid="projected",
+        variables=_STANDARD_8 | {"wind_speed"},
+        fetchable=_STANDARD_8 | {"dewpoint_temperature"},
+        auth=frozenset(),
+        temporal=("1980-01-01", "2025-01-01"),
+        parity="bit-identical",
+        variables_key=None,
+        native_to_canonical=None,
+        notes=(
+            "Alias of the RDRS capability: SYMFLUENCE's CASR is the same ECCC "
+            "CaSR product family. Natively CASR is MAF/datatool-only (HPC-"
+            "prestaged CaSR v3.1 extracts, RPN names like CaSR_v3.1_P_TT_1.5m); "
+            "the only public cloud upstream is the PAVICS CaSR v3.2 store — the "
+            "very store this product reads, verified bitwise against the native "
+            "RDRSAcquirer (exp10). Note the served version is v3.2 (the v3.1 "
+            "HPC staging stays native-only by definition)."
+        ),
+    ),
+    DatasetSpec(
+        family="CONUS404",
+        dataset_ids=("CONUS404",),
+        product="conus404:hourly",
+        grid="projected",
+        variables=_STANDARD_8 | {"wind_speed"},
+        fetchable=_STANDARD_8 | {"dewpoint_temperature"},
+        auth=frozenset(),
+        temporal=("1979-10-01", "2022-10-01"),
+        parity="value-identical:1ulp",
+        variables_key=None,
+        native_to_canonical=None,
+        notes=(
+            "USGS/NCAR CONUS404 4 km WRF hourly (HyTEST OSN Zarr — the same "
+            "store the native intake-catalog route reads). exp13: T/q/p/u/v and "
+            "derived wind_speed bitwise; precip + radiation <= 1 float32 ulp "
+            "(op order, /3600 vs *(1/3600)). The first radiation step differs "
+            "by design: the native pipeline back-fills it from step 2, the "
+            "community pipeline de-accumulates it against a real pre-window "
+            "hour (more correct; documented)."
+        ),
+    ),
+    DatasetSpec(
+        family="NWM3",
+        dataset_ids=("NWM3_RETROSPECTIVE",),
+        product="aorc_nwm:conus_1km",
+        grid="projected",
+        variables=_STANDARD_8 | {"wind_speed"},
+        fetchable=_STANDARD_8,
+        auth=frozenset(),
+        temporal=("1979-02-01", "2023-02-01"),
+        parity="bit-identical",
+        variables_key="NWM3_VARIABLES",
+        native_to_canonical=_NWM3_TO_CANONICAL,
+        notes=(
+            "NWM v3.0 retrospective forcing (AORC v1.1 on the NWM 1 km LCC "
+            "grid; noaa-nwm-retrospective-3-0-pds Zarr stores — the same ones "
+            "the native handler opens). exp15: all 8 variables + 2-D lat/lon + "
+            "time bitwise. Convention note: canonical precipitation is a flux "
+            "(kg m-2 s-1); the native file ships the identical values *3600 "
+            "(hourly accumulation) — value-equivalent. Serves only the "
+            "'forcing' output type (chrtout/ldasout/... stay native)."
         ),
     ),
     DatasetSpec(
@@ -942,15 +1048,38 @@ class CanonicalV1Handler(_DatasetBase):
                 self, raw_forcing_path, merged_forcing_path, start_year, end_year
             )
 
+    @staticmethod
+    def _native_time_step(ds: xr.Dataset) -> Any:
+        """Median time step of the store (``pandas.Timedelta``), or ``None``.
+
+        Canonical stores are regular by contract, but a consolidated file can
+        carry gaps — the *median* diff recovers the native step regardless
+        (hourly for RDRS/CONUS404/HRRR/NWM3, daily for Daymet).
+        """
+        import numpy as np
+        import pandas as pd
+
+        if ds.sizes.get("time", 0) < 2:
+            return None
+        diffs = np.diff(ds["time"].values)
+        return pd.Timedelta(np.median(diffs.astype("timedelta64[s]").astype("int64")), unit="s")
+
     def _merge_projected(
         self, files: list[Path], merged_forcing_path: Path, start_year: int, end_year: int
     ) -> None:
         """Split consolidated projected canonical store(s) into monthly files.
 
         Mirrors the native projected pipeline's consolidated-file path
-        (rdrs_utils._merge_from_consolidated): per-month slice, complete hourly
-        time axis (gap interpolation + edge fill), standard time encoding and
+        (rdrs_utils._merge_from_consolidated): per-month slice, complete time
+        axis (gap interpolation + edge fill), standard time encoding and
         cleaned attributes, written as ``{DATASET}_monthly_YYYYMM.nc``.
+
+        The native pipeline hardcodes an hourly axis (RDRS); here the axis is
+        rebuilt at the store's *native* step so every projected grid family
+        works: hourly stores keep the exact native behaviour (full-month
+        00:00..23:00 axis), while non-hourly stores (Daymet daily, anchored at
+        noon) are re-gridded from the first to the last actual timestamp of
+        the month at their own step — never resampled to a finer resolution.
         """
         import pandas as pd
         import xarray
@@ -964,6 +1093,9 @@ class CanonicalV1Handler(_DatasetBase):
             datasets, dim="time", data_vars="all"
         ).sortby("time").drop_duplicates(dim="time")
 
+        step = self._native_time_step(ds)
+        hourly = step is not None and step == pd.Timedelta(hours=1)
+
         for year in range(start_year - 1, end_year + 1):
             for month in range(1, 13):
                 start_time = pd.Timestamp(year, month, 1)
@@ -976,7 +1108,20 @@ class CanonicalV1Handler(_DatasetBase):
                 if monthly.sizes.get("time", 0) == 0:
                     continue
 
-                expected_times = pd.date_range(start=start_time, end=end_time, freq="h")
+                expected_times: Any
+                if hourly:
+                    # Exact native-pipeline behaviour: full-month hourly axis.
+                    expected_times = pd.date_range(start=start_time, end=end_time, freq="h")
+                elif step is not None:
+                    # Native-step axis anchored on the store's own timestamps
+                    # (Daymet daily values sit at 12:00; keep that anchoring).
+                    expected_times = pd.date_range(
+                        start=monthly["time"].values[0],
+                        end=monthly["time"].values[-1],
+                        freq=step,
+                    )
+                else:  # single-step month: nothing to fill
+                    expected_times = monthly["time"].values
                 monthly = monthly.reindex(time=expected_times)
                 monthly = monthly.interpolate_na(dim="time", method="linear")
                 monthly = monthly.ffill(dim="time").bfill(dim="time")

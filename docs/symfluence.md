@@ -66,6 +66,9 @@ from a non-native backend unless `ALLOW_UNGATED_BACKENDS: true`.
 | `AORC` | `aorc:conus_1km` | regular lat/lon | `bit-identical` (declines pre-2002 windows: the native NWM-projected fallback serves those) |
 | `NEX-GDDP-CMIP6`, `NEX-GDDP` | `nex_gddp:<scenario>` | regular lat/lon | `bit-identical` (same physical files; NCCS THREDDS vs S3 mirror) |
 | `RDRS`, `RDRS_v3.1` | `rdrs:casr_v32` | **projected** (rotated pole) | `bit-identical` (exp10: all 9 variables + rlat/rlon + 2-D lat/lon + time bitwise) |
+| `CASR` | `rdrs:casr_v32` | **projected** (rotated pole) | `bit-identical` — alias of the RDRS capability (same ECCC CaSR family / same PAVICS store, see fine print) |
+| `CONUS404` | `conus404:hourly` | **projected** (LCC 4 km) | `value-identical:1ulp` (exp13: T/q/p/u/v + wind_speed bitwise; precip + radiation ≤ 1 float32 ulp; first radiation step differs by design, see fine print) |
+| `NWM3_RETROSPECTIVE` | `aorc_nwm:conus_1km` | **projected** (LCC 1 km) | `bit-identical` (exp15: all 8 variables + 2-D lat/lon + time bitwise; precip convention differs — flux vs ×3600 accumulation, value-equivalent) |
 | `CFS` | from `options={'product': …}` / `CFS_PRODUCT` | varies | *ungraded* (`None`) — exercises the ungated policy |
 
 **ERA5 fine print:** both sides read the same ARCO Zarr bytes. Instantaneous
@@ -83,11 +86,29 @@ own `sfcWind` diagnostic, which is computed upstream with different
 physics-level rounding — physically negligible and documented rather than
 chased.
 
+**CASR fine print:** SYMFLUENCE's `CASR` is the same ECCC CaSR product family
+as RDRS. Natively it is MAF/datatool-only (HPC-prestaged **CaSR v3.1**
+extracts with RPN variable names like `CaSR_v3.1_P_TT_1.5m`; `casr_utils`
+converts the non-SI units heuristically). The only public cloud upstream is
+the PAVICS **CaSR v3.2** store — exactly what `rdrs:casr_v32` reads, verified
+bitwise against the native `RDRSAcquirer` in exp10 (and `casr_utils`
+explicitly supports that consolidated v3.2 layout too). The community
+backend therefore serves CASR as v3.2; the v3.1 HPC staging remains
+native-only by definition.
+
+**CONUS404 fine print:** both sides read the HyTEST OSN Zarr. The two
+radiation fields are stored as running accumulations (J m⁻²): the community
+pipeline de-accumulates them against a real pre-window hour, while the native
+preprocessing back-fills the first step from step 2 — so the *first timestep
+of a fetch* differs (community is the physically correct increment). All
+later steps agree to ≤ 1 float32 ulp (`/3600` vs `*(1/3600)` op order, same
+as precipitation).
+
 **Excluded:** `MSWEP` and `EM-EARTH` are *not claimed* until live parity
 validation is possible (blocked: no rclone Google Drive remote for MSWEP; the
-EM-Earth S3 bucket denies anonymous GET). Their native handlers keep running
-untouched under every `DATA_ACCESS` value. Other projected datasets (CARRA,
-CERRA, CONUS404, HRRR, …) follow RDRS once their parity experiments land.
+EM-Earth S3 bucket denies anonymous GET — and the FRDR archive is
+Globus-only, see the [catalog notes](catalog.md)). Their native handlers
+keep running untouched under every `DATA_ACCESS` value.
 
 ## Per-dataset opt-out
 
@@ -98,22 +119,34 @@ DATA_ACCESS: community     # community everywhere it's covered...
 ERA5_BACKEND: native       # ...but keep native ERA5 acquisition
 ```
 
-## Projected grids (RDRS first)
+## Projected grids
 
-RDRS is the first community dataset on a projected grid. The canonical-v1
-layout keeps the native `rlat`/`rlon` dims with 2-D `latitude`/`longitude`
-auxiliary coordinates (see the [canonical-v1 spec](canonical-v1.md));
+Three projected grid families are served, all through the same
+`CanonicalV1Handler` pathway. The canonical-v1 layout keeps the native index
+dims with 2-D `latitude`/`longitude` auxiliary coordinates (see the
+[canonical-v1 spec](canonical-v1.md)):
+
+- **rotated pole** — `rlat`/`rlon` dims (RDRS / CASR, CaSR v3.2);
+- **Lambert conformal conic** — `y`/`x` dims in projected metres
+  (CONUS404 4 km, NWM3 retrospective 1 km, HRRR 3 km);
+- **daily LCC** — same `y`/`x` + 2-D lat/lon structure but a *daily* time
+  axis anchored at noon (Daymet 1 km).
+
 `CanonicalV1Handler`:
 
 - reports coordinate names `('latitude', 'longitude')` (EASYMORE handles 1-D
-  and 2-D coords by name),
+  and 2-D coords by name); the projected layout is detected from the 2-D
+  latitude coordinate, never from dim names,
 - splits the consolidated canonical store into native-pipeline-style monthly
-  files (`RDRS_monthly_YYYYMM.nc`, complete hourly axis, gap-filled exactly
-  like the native consolidated path),
+  files (`{DATASET}_monthly_YYYYMM.nc`). Hourly stores get the exact native
+  behaviour (complete full-month hourly axis, gap-filled like the native
+  consolidated path); non-hourly stores are rebuilt at their **native step**
+  (inferred as the median time diff), anchored on the store's own
+  timestamps — a daily Daymet store stays daily and keeps its noon stamps,
 - builds the forcing-grid shapefile with one polygon per native cell from the
   2-D coordinate corners — ported from the proven native RDRS implementation
-  (the grids were verified bitwise identical in exp10, so the geometry
-  matches).
+  (the grids were verified bitwise identical in exp10/exp13/exp15, so the
+  geometry matches) and identical for every projected family.
 
 ## NEX-GDDP specifics
 
