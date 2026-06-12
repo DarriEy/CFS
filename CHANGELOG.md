@@ -9,19 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **SYMFLUENCE integration via entry-point plugin**
+- **SYMFLUENCE drop-in backend via entry-point plugin**
   (`cfs.integrations.symfluence`): installing CFS next to SYMFLUENCE makes
-  every CFS product available as a SYMFLUENCE forcing dataset
-  (`FORCING_DATASET: CFS` + `CFS_PRODUCT: <provider:product>`), with no
-  manual registration — SYMFLUENCE discovers the `symfluence.plugins` entry
-  point on import. Ships `CFSForcingAcquirer` (acquisition handler wrapping
-  `cfs.fetch_sync`, registered as `'CFS'`) and `CFSDatasetHandler` (CFIF
-  preprocessing handler, registered as `'cfs'`; canonical-v1 names map to
-  CFIF by identity). Regular latitude/longitude grids only in v1;
-  projected-grid products raise `NotImplementedError`. SYMFLUENCE base
-  classes are imported defensively, so `import cfs` never requires (or
-  fails without) SYMFLUENCE, and SYMFLUENCE is **not** a dependency.
-  Documented in `docs/symfluence.md`.
+  CFS a drop-in replacement for SYMFLUENCE's in-tree forcing acquisition —
+  users keep their existing configs (`FORCING_DATASET: ERA5`, …) and enable
+  it with the existing `DATA_ACCESS` gate's new `community` value. At
+  registration (which runs after SYMFLUENCE's in-tree handlers register),
+  the plugin captures each native acquisition class and re-registers a
+  **shadow wrapper under the same name**; the wrapper routes per
+  `download()` call: `DATA_ACCESS: community` → `cfs.fetch_sync` writing
+  canonical-v1 NetCDF (the `cfs_schema` attr is the downstream detection
+  key), anything else → the captured native class runs unchanged
+  (bit-identical default). Per-dataset opt-out via flat
+  `<NATIVE_NAME>_BACKEND: native` keys. The shadow map is **parity-gated**
+  (live-measured 2026-06-11, both sides reading the same upstream archives):
+  ERA5→`era5_arco:single_levels` (≤ 2 float32 ulps on the 3
+  accumulation→flux vars, op-order only; the SYMFLUENCE-derived
+  `wind_speed`/`specific_humidity` are recomputed with the native op order,
+  bitwise equal), NLDAS/NLDAS2/NLDAS-2→`nldas:fora0125_h` (bitwise 7/8 vars,
+  precip ≤ 1 ulp), AORC→`aorc:conus_1km` (bit-identical),
+  NEX-GDDP(-CMIP6)→`nex_gddp:<scenario>` built from the native `NEX_*`
+  config keys (bit-identical; same synthetic surface pressure as the native
+  handler). MSWEP and EM-EARTH are deliberately NOT shadowed until live
+  parity validation is possible (blocked: rclone Drive remote / S3
+  credentials); projected-grid datasets are not shadowed in v1. Matching
+  **self-detecting dataset-handler shadows** (`era5`, `aorc`, `nex-gddp`,
+  `nex-gddp-cmip6`) route canonical-v1 raw files to the canonical→CFIF path
+  and delegate native-format files to the captured native handler — per-file
+  in `process_dataset`, so mixed raw directories work; `nldas`/`nldas2`/
+  `nldas-2` (which have no native dataset handler in SYMFLUENCE) are
+  registered outright for community-acquired canonical files only.
+- **Parallel-name mode**: every CFS product is also available as a
+  SYMFLUENCE forcing dataset (`FORCING_DATASET: CFS` +
+  `CFS_PRODUCT: <provider:product>`), with no manual registration —
+  SYMFLUENCE discovers the `symfluence.plugins` entry point on import.
+  Ships `CFSForcingAcquirer` (acquisition handler wrapping `cfs.fetch_sync`,
+  registered as `'CFS'`) and `CFSDatasetHandler` (CFIF preprocessing
+  handler, registered as `'cfs'`; canonical-v1 names map to CFIF by
+  identity). Regular latitude/longitude grids only in v1; projected-grid
+  products raise `NotImplementedError`. SYMFLUENCE base classes are imported
+  defensively, so `import cfs` never requires (or fails without) SYMFLUENCE,
+  and SYMFLUENCE is **not** a dependency. Documented in `docs/symfluence.md`.
 
 ### Fixed
 
