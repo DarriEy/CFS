@@ -80,7 +80,7 @@ from a non-native backend unless `ALLOW_UNGATED_BACKENDS: true`.
 | `CARRA` | `carra:single_levels` | regular lat/lon (CDS-interpolated) | `value-identical:grib-repack` (exp11: time bitwise; every field differs only by CDS's per-request GRIB re-packing + the documented q-epsilon derivation, see fine print). **Arctic-only** (≥ 55°N); `CARRA_DOMAIN` selects the west/east CDS split |
 | `CERRA` | `cerra:single_levels` | regular lat/lon (CDS-interpolated) | `value-identical:grib-repack` (exp12: pressure + time bitwise, rest grib-repack/q-epsilon; **longwave is community-only** — the native handler requests a CDS variable name CERRA doesn't have, see fine print). **Europe-only**; archive ends 2021-06-30 |
 | `HRRR` | `hrrr:sfc_anl` | **projected** (LCC 3 km) | `bit-identical` (exp14: all 7 analysis variables + time bitwise; 2-D lat/lon ≤ 3.9 × 10⁻⁶ ° — native recomputes them with pyproj, CFS reads the published grid arrays). **No precipitation** in the analysis stream (either side). **CONUS-only** |
-| `DAYMET` | `daymet:daily_v4` | **projected** (daily LCC 1 km) | `bit-identical:point-sampled` (exp16: all four canonical derivations bitwise vs the raw values from the native single-pixel route at every sampled cell; full-grid comparison blocked by a NASA Hyrax outage on campaign day, see fine print). Daily noon-anchored. **North-America-only** |
+| `DAYMET` | `daymet:daily_v4` | **projected** (daily LCC 1 km) | `bit-identical` (exp16: all four canonical derivations + 2-D lat/lon + time bitwise across the full 57 × 46 × 14 window (36 708 cells/var); raw window fetched independently over the same Hyrax DAP2 hyperslab route, see fine print). Daily noon-anchored. **North-America-only** |
 | `CFS` | from `options={'product': …}` / `CFS_PRODUCT` | varies | *ungraded* (`None`) — exercises the ungated policy |
 
 **ERA5 fine print:** both sides read the same ARCO Zarr bytes. Instantaneous
@@ -152,22 +152,31 @@ variable groups carry no latitude coordinate to mask on), so the native
 handler downloads the full CONUS grid (~1.3 GB/day; 42 min for the 1-day
 experiment vs 96 s for the windowed community fetch).
 
-**DAYMET fine print:** the `point-sampled` qualifier is deliberate honesty:
-on campaign day NASA Hyrax answered every OPeNDAP data request with 120-s
-read timeouts and intermittent 404/500s, so the full-grid raw comparison
-could not complete. The banked evidence: all four canonical derivations
-(`T=(tmax+tmin)/2+273.15`, `precip=prcp/86400`, `SW=srad·dayl/86400`,
-`dewpoint=inverse-Bolton(vp)`) recomputed in float32 from the raw daily
-values served by ORNL's **single-pixel API** — the native handler's own
-point route, healthy and independent of Hyrax — are bitwise identical to the
-community canonical artifact at every sampled cell (5 cells × 14 days), and
-the API-reported containing-cell LCC x/y matches the canonical store's cell
-coordinates to ≤ 0.3 m. Native-side findings: the native *gridded* OPeNDAP
-route slices the descending Daymet `y` axis with an ascending slice and so
-returns empty subsets for every variable — it cannot produce gridded data at
-all on the validated branch — and its OPeNDAP URL is `https://`-hardcoded
-(fails under libnetcdf ≥ 4.10 probing); there is no THREDDS-NCSS fallback
-(ORNL's legacy THREDDS endpoint now 404s into the same DMR++ backend).
+**DAYMET fine print:** the verdict is a **full-grid** comparison. All four
+canonical derivations (`T=(tmax+tmin)/2+273.15`, `precip=prcp/86400`,
+`SW=srad·dayl/86400`, `dewpoint=inverse-Bolton(vp)`) recomputed in float32
+from the raw Daymet granule values are bitwise identical to the community
+canonical artifact across every one of the 57 × 46 × 14 = 36 708 cells per
+variable, and the 2-D lat/lon grid and the time axis are bitwise identical
+too. The raw window was fetched independently over the same Hyrax DAP2 route
+(identical `.dods` hyperslab constraints `tmax[151:1:164][5234:1:5290][4108:1:4153]`,
+etc.) — only the HTTP client differs (curl + EDL cookies, since the staged
+pydap session was hitting intermittent 120-s read timeouts on campaign day),
+decoded through the same xarray `decode_cf` path. The lone non-bitwise
+variant is the *native-op-order* shortwave `srad·(dayl/86400)`, which differs
+from the community `srad·dayl/86400` by ≤ 2 float32 ulps (1.3 × 10⁻⁷
+relative) — a documented operation-order delta, not a community deviation.
+Corroborating evidence: the earlier point-sampled run (5 cells × 14 days via
+ORNL's independent **single-pixel API**) was also bitwise identical, with the
+API-reported containing-cell LCC x/y matching the canonical cell coordinates
+to ≤ 0.3 m. Native-side findings (separate from the parity verdict, which
+uses an independent raw route): the native *gridded* OPeNDAP route slices the
+descending Daymet `y` axis with an ascending slice and so returns empty
+subsets — it cannot produce gridded data on the as-validated branch (a repair
+exists on `fix/native-acquisition-bugs` but is **not yet merged to develop**)
+— and its OPeNDAP URL is `https://`-hardcoded (fails under libnetcdf ≥ 4.10
+probing); there is no THREDDS-NCSS fallback (ORNL's legacy THREDDS endpoint
+now 404s into the same DMR++ backend).
 
 **Excluded:** `MSWEP` and `EM-EARTH` are *not claimed* until live
 native-vs-community parity validation is possible (blocked: no rclone Google

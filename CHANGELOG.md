@@ -61,18 +61,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     grid** (~1.3 GB/day, 42 min for the 1-day experiment) where the community
     fetch windows to the bbox (96 s). CONUS-only; legacy `HRRR_VARS` key
     translated.
-  - `DAYMET` → `daymet:daily_v4` (exp16: `bit-identical:point-sampled` —
-    all four canonical derivations recomputed in float32 from the raw daily
-    values served by ORNL's single-pixel API (the native handler's own point
-    route) are bitwise identical to the community artifact at every sampled
-    cell, with exact containing-cell LCC identity; the *qualifier* records
-    that the full-grid raw comparison was blocked by a NASA Hyrax outage on
-    campaign day — every `.dods` request hit 120-s read timeouts or 404/500.
-    Native-side findings: the native gridded OPeNDAP route slices the
-    descending Daymet y axis with an ascending slice and returns empty
-    subsets (it cannot produce gridded data at all), and there is no
-    THREDDS-NCSS alternative path in the handler. Daily 1 km LCC,
-    North-America-only; legacy `DAYMET_VARIABLES` key translated.
+  - `DAYMET` → `daymet:daily_v4` (exp16: `bit-identical` — **full-grid**:
+    all four canonical derivations (`T=(tmax+tmin)/2+273.15`, `prcp/86400`,
+    `srad·dayl/86400`, inverse-Bolton dewpoint) recomputed in float32 from the
+    raw Daymet granule values are bitwise identical to the community artifact
+    across all 57 × 46 × 14 = 36 708 cells per variable, and the 2-D lat/lon
+    grid and time axis are bitwise identical too. The raw window was fetched
+    independently over the same Hyrax DAP2 hyperslab route (curl + EDL cookies,
+    after the staged pydap session hit intermittent 120-s read timeouts);
+    only the HTTP client differs. The native-op-order shortwave variant
+    `srad·(dayl/86400)` is the lone non-bitwise case (≤ 2 f32 ulps, op-order
+    only). The earlier point-sampled run (5 cells via ORNL's independent
+    single-pixel API, with exact containing-cell LCC identity) stands as
+    corroboration. Native-side findings (the parity verdict uses an independent
+    raw route, not the native gridded path): the native gridded OPeNDAP route
+    slices the descending Daymet y axis with an ascending slice and returns
+    empty subsets (a repair exists on `fix/native-acquisition-bugs`, not yet
+    merged to develop), and there is no THREDDS-NCSS alternative in the handler.
+    Daily 1 km LCC, North-America-only; legacy `DAYMET_VARIABLES` key
+    translated.
 - **Spatial domains on capabilities** (`DatasetSpec.spatial`, minimal honest
   extension): regional datasets refuse out-of-domain bboxes at `acquire()`
   time with a plain `AcquisitionError` — deliberately not a
