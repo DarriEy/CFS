@@ -3,12 +3,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import numpy as np
 import pytest
 
 xr = pytest.importorskip("xarray")
 
-from cfs.connectors.nwm_operational import _MAPPINGS, NWMOperationalConnector
+from cfs.connectors.nwm_operational import (
+    _MAPPINGS,
+    NWMOperationalConnector,
+    _analysis_path,
+    _floor_cycle,
+    _forecast_path,
+)
 from cfs.core.registry import discover, list_providers
 from cfs.core.vocabulary import CanonicalVar
 from cfs.subset.canonical import harmonize
@@ -23,10 +31,33 @@ async def test_products():
     conn = NWMOperationalConnector()
     products = await conn.list_products()
     ids = {p.id for p in products}
-    # Only analysis_assim is exposed (maps cleanly to a valid-time forcing via the
-    # tm00 file); the short/medium-range forecasts need a cycle×lead resolver and
-    # are intentionally out of scope.
-    assert ids == {"nwm_operational:analysis_assim"}
+    # analysis_assim (tm00 valid-time forcing) plus the two deterministic forecast
+    # configs resolved via a cycle×lead resolver.
+    assert ids == {
+        "nwm_operational:analysis_assim",
+        "nwm_operational:short_range",
+        "nwm_operational:medium_range",
+    }
+
+
+def test_floor_cycle_cadence():
+    # short_range cycles hourly; medium_range every 6 h.
+    assert _floor_cycle(datetime(2026, 6, 15, 13, 42), 1) == datetime(2026, 6, 15, 13)
+    assert _floor_cycle(datetime(2026, 6, 15, 13, 42), 6) == datetime(2026, 6, 15, 12)
+    assert _floor_cycle(datetime(2026, 6, 15, 5, 59), 6) == datetime(2026, 6, 15, 0)
+
+
+def test_path_patterns_match_live_layout():
+    ts = datetime(2026, 6, 15, 0)
+    assert _analysis_path(ts).endswith(
+        "nwm.20260615/forcing_analysis_assim/nwm.t00z.analysis_assim.forcing.tm00.conus.nc"
+    )
+    assert _forecast_path("short_range", ts, 6).endswith(
+        "nwm.20260615/forcing_short_range/nwm.t00z.short_range.forcing.f006.conus.nc"
+    )
+    assert _forecast_path("medium_range", datetime(2026, 6, 15, 12), 240).endswith(
+        "nwm.20260615/forcing_medium_range/nwm.t12z.medium_range.forcing.f240.conus.nc"
+    )
 
 
 def test_mappings_identity():

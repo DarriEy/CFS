@@ -93,6 +93,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Td ≤ T, de-accumulated precip ≥ 0 and SW ramp 0→129 W m⁻²); AIFS steps
   6/12/18 (multi-lead, in-range T, precip ≥ 0).
 
+- **NWM operational forecast forcing** (`nwm_operational:short_range`,
+  `nwm_operational:medium_range`): the two deterministic forecast
+  configurations on the `noaa-nwm-pds` 1 km CONUS LCC grid are no longer
+  deferred. Like `gfs`, each requested valid hour is served from the most
+  recent cycle at or before the window start (`lead = valid − cycle`):
+  short_range from hourly cycles (`f001`–`f018`), medium_range from
+  00/06/12/18Z cycles (`f001`–`f240`). There is **no `f000`** forcing file, so
+  a valid hour equal to the cycle time is reported unavailable (warned) — use
+  `analysis_assim` for the nowcast; leads beyond the horizon are skipped
+  (warned). The CONUS forcing carries **no ensemble members** (the NWM
+  ensemble lives in the model output, not the forcing input). All variables
+  are native SI (identity); the 2-D lat/lon is generated from the LCC
+  projection, shared with `analysis_assim` and `aorc_nwm`. Live-probed and
+  live-verified against `noaa-nwm-pds` 2026-06-15 (Colorado: T 270–288 K,
+  cycle resolver + no-`f000` warning confirmed). Rolling ~4-week archive.
+  (`long_range` — ensemble + 3-hourly leads — and the non-CONUS/blend domains
+  remain follow-ups.)
+
 - **EM-Earth unblocked via FRDR anonymous HTTPS** (`source: "frdr"` +
   `data_dir` staging on the `em_earth` connector). FRDR's documented stable
   per-file links (`…/repo/files/6/published/publication_542/submitted_data/

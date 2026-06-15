@@ -664,7 +664,7 @@
   temporal_resolution: hourly
   license: "U.S. Government work / NOAA Open Data (public domain)"
   citation: "NOAA National Water Model (NWM) operational data."
-  products: 1
+  products: 3                 # analysis_assim, short_range, medium_range
   canonical_variables:
     - air_temperature
     - specific_humidity
@@ -674,7 +674,7 @@
     - surface_downwelling_shortwave_flux
     - surface_downwelling_longwave_flux
     - precipitation_flux
-  note: "Only analysis_assim exposed (tm00 file = forcing at valid time); short/medium-range forecasts out of scope. lat/lon generated from the 1km LCC projection (LDASIN has only x/y). Rolling ~4-week archive. LIVE-VERIFIED (CONUS 2026-05-28: T 293-301 K, precip <=6.6 mm/h)."
+  note: "Three configs: analysis_assim (tm00 = forcing at valid time), short_range (hourly cycles, f001-f018), medium_range (00/06/12/18Z cycles, f001-f240). Forecasts resolve each valid hour to (most-recent cycle <= start, lead = valid-cycle); there is NO f000 (a valid hour == cycle time is warned-unavailable -> use analysis_assim for the nowcast). CONUS forcing has no ensemble members. lat/lon generated from the 1km LCC projection (LDASIN has only x/y). Rolling ~4-week archive. LIVE-VERIFIED: analysis_assim (CONUS 2026-05-28: T 293-301 K, precip <=6.6 mm/h); short_range + medium_range (Colorado 2026-06-15: T 270-288 K, cycle resolver + no-f000 warning confirmed)."
   status: implemented
   verified: true
   caveats:
