@@ -37,8 +37,10 @@ radiation, J m⁻²). ECMWF accumulates these from forecast start (step 0) with 
 within-run reset, so the per-interval value is ``acc(step) − acc(prev_step)``
 over the previous available step; precipitation is then converted m → kg m⁻²
 (×1000) and divided by the interval to a flux (kg m⁻² s⁻¹), and the radiation
-J m⁻² is divided by the interval to W m⁻². Accumulated fields are absent at
-step 0 (the analysis).
+J m⁻² is divided by the interval to W m⁻². The **first** forecast step has no
+prior step to subtract (step 0 carries no accumulation), and because the
+accumulation starts at t=0 its increment is simply ``acc(step)`` — so the first
+step's precipitation/radiation are kept, not dropped.
 
 ECMWF open-data is **CC-BY-4.0** (attribution), unlike the NOAA public-domain
 sources. Needs the ``forecast`` extra (cfgrib/eccodes). Anonymous on the AWS
@@ -282,22 +284,29 @@ class ECMWFOpenDataConnector(BaseForcingConnector):
                 rng = _find(recs, param, number=member)
                 if rng is not None:
                     per_var.append(read_message(url, rng[0], rng[1], param, bbox, label="ECMWF"))
-            # Accumulated fields: de-accumulate against the previous step, same member
-            # (absent at step 0).
+            # Accumulated fields de-accumulate against the previous step (same member).
+            # ECMWF accumulates from t=0, so the FIRST forecast step's increment is
+            # acc(step) itself — step 0 carries no accumulation baseline to subtract.
             if selected_accum and step > 0:
                 prev = _prev_step(step, spacing)
                 interval = (step - prev) * 3600.0
-                purl = _file_url(model, stream, suffix, cycle, prev)
-                precs = parse_ecmwf_index(
-                    http_range(_index_url(model, stream, suffix, cycle, prev), 0, "").decode())
+                precs = None
+                if prev > 0:
+                    precs = parse_ecmwf_index(
+                        http_range(_index_url(model, stream, suffix, cycle, prev), 0, "").decode())
                 for param, _canon, scale in selected_accum:
                     cr = _find(recs, param, number=member)
-                    pr = _find(precs, param, number=member)
-                    if cr is None or pr is None:
+                    if cr is None:
                         continue
                     cur = read_message(url, cr[0], cr[1], param, bbox, label="ECMWF")
-                    prv = read_message(purl, pr[0], pr[1], param, bbox, label="ECMWF")
-                    per_var.append(((cur - prv) * (scale / interval)).clip(min=0))
+                    if precs is not None:  # subtract the previous step's run-total
+                        pr = _find(precs, param, number=member)
+                        if pr is None:
+                            continue
+                        cur = cur - read_message(
+                            _file_url(model, stream, suffix, cycle, prev),
+                            pr[0], pr[1], param, bbox, label="ECMWF")
+                    per_var.append((cur * (scale / interval)).clip(min=0))
             if not per_var:
                 return None
             merged = xr.merge(per_var, join="inner", compat="override")

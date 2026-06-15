@@ -103,14 +103,17 @@ def test_urls():
 
 
 def test_parse_ecmwf_index():
-    # oper records carry no member (number=None); enfo records carry "number".
+    # oper records carry no member (number=None); enfo records carry "number",
+    # which is coerced to str whether the feed emits it as a string or an int.
     text = (
         '{"param":"tp","levtype":"sfc","step":"3","_offset":0,"_length":691163}\n'
         '\n'
         '{"param":"2t","levtype":"sfc","step":"3","number":"5","_offset":700,"_length":800}\n'
+        '{"param":"2t","levtype":"sfc","step":"3","number":7,"_offset":900,"_length":100}\n'
     )
     recs = parse_ecmwf_index(text)
     assert recs == [
         ("tp", "sfc", "3", None, 0, 691163),
         ("2t", "sfc", "3", "5", 700, 800),
+        ("2t", "sfc", "3", "7", 900, 100),   # JSON int 7 coerced to "7"
     ]

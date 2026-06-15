@@ -55,6 +55,12 @@ async def test_ecmwf_ifs_multistep_deaccum():
     assert np.all(td <= t + 0.5)                                   # dewpoint <= temperature
     assert float(ds[CanonicalVar.PRECIPITATION_FLUX].min()) >= 0.0  # de-accumulated flux
     assert float(ds[CanonicalVar.SHORTWAVE_RADIATION_DOWN].min()) >= 0.0
+    # Regression: the FIRST forecast step (prev = step 0) must not drop its
+    # accumulated fields — ECMWF accumulates from t=0, so step 3's increment is
+    # acc(3) itself. Assert the earliest time's precip/SW are present (not NaN).
+    first = ds.isel(time=0)
+    assert bool(np.isfinite(first[CanonicalVar.PRECIPITATION_FLUX]).all())
+    assert bool(np.isfinite(first[CanonicalVar.SHORTWAVE_RADIATION_DOWN]).all())
 
 
 @pytest.mark.network

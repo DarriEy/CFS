@@ -141,7 +141,14 @@ def open_message(
     data_vars = list(ds.data_vars)
     if not data_vars:
         raise SubsetError(f"{label} message for {internal} decoded no variable")
-    name = prefer if (prefer is not None and prefer in data_vars) else data_vars[0]
+    if prefer is not None and prefer not in data_vars:
+        # Fail loud rather than silently take data_vars[0] — for a combined U/V
+        # message that fallback would mislabel one wind component as the other.
+        raise SubsetError(
+            f"{label}: requested component {prefer!r} not in decoded variables "
+            f"{data_vars} (for {internal})"
+        )
+    name = prefer if prefer is not None else data_vars[0]
     ds = ds[[name]].rename({name: internal})
     drop = [c for c in ds.coords if c not in (_LAT, _LON)]
     return ds.drop_vars(drop, errors="ignore")
@@ -292,8 +299,11 @@ def parse_ecmwf_index(
         if not line:
             continue
         r = json.loads(line)
+        # Coerce `number` to str (the feed may emit it as a JSON int) so member
+        # matching in _find is type-stable, mirroring `step`.
+        number = str(r["number"]) if "number" in r else None
         out.append(
-            (r.get("param"), r.get("levtype"), str(r.get("step")), r.get("number"),
+            (r.get("param"), r.get("levtype"), str(r.get("step")), number,
              int(r["_offset"]), int(r["_length"])),
         )
     return out
