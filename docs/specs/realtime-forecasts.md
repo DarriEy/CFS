@@ -153,21 +153,31 @@ model; AIFS is ECMWF's ML model. Both 0.25° global on a regular lat/lon grid.
 | **License** | ECMWF open-data is CC-BY-4.0 — different from NOAA public-domain; record in the catalog |
 | **Effort** | **L** (new index format + dewpoint derivation + radiation verification) |
 
-### C2. NBM — `nbm:co_fcst` (lower priority; caveat-heavy)
+### C2. NBM — **DEFERRED** (investigated 2026-06-15; structurally incomplete as forcing)
 
-NOAA's National Blend of Models — a statistical blend, 2.5km CONUS. Useful for
-T/wind, but precipitation is **probabilistic** (percentiles / PoP), not a clean
-deterministic accumulation, so it's a poorer fit for deterministic hydro forcing
-than B1–B3.
+NOAA's National Blend of Models, 2.5 km CONUS (`noaa-nbm-grib2-pds`,
+`blend.YYYYMMDD/{cyc}/core/blend.t{cyc}z.core.f{FFF}.co.grib2` + `.idx`, hourly
+to f264). A live probe of the `core` CONUS `.idx` shows NBM is a **poor forcing
+citizen** — the deferral reason is stronger than "probabilistic precip":
 
-| | |
-|---|---|
-| **Source** | `s3://noaa-nbm-grib2-pds/blend.YYYYMMDD/{cyc}/core/blend.t{cyc}z.core.f{FFF}.co.grib2` (+ `.idx`) |
-| **Grid** | 2.5km LCC CONUS |
-| **Cadence / leads** | hourly cycles; hourly to f36, then 3/6-hourly to f264 (VERIFY) |
-| **Canonical vars** | TMP/winds map cleanly; **APCP is interval-probabilistic** — for v1 expose the deterministic/mean fields only and document that NBM precip is not a physical accumulation |
-| **Auth** | anonymous |
-| **Effort** | **M**, but **recommend deferring** until A/B land — the precip semantics make it the weakest forcing fit of the set |
+- **Missing two important forcing variables entirely**: no surface pressure
+  (`PRES`/`PRMSL`/`MSLET` absent) and **no downward longwave** (`DLWRF`/`LWRF`
+  absent). Many land-surface/hydrology models require both.
+- **Wind is speed-only**: `WIND`/`WDIR` at 10 m, **no `UGRD`/`VGRD`** — maps to
+  canonical `wind_speed`, not the eastward/northward components.
+- **Disambiguation needed**: `TMP` 2 m has a deterministic message *and* an
+  `ens std dev` message; `APCP` has a deterministic accumulation *and* a PoP
+  (`prob >0.254`) message — each requires selecting the right one by its
+  trailing `.idx` field.
+
+Net forcing coverage would be **5 of 8 canonical variables** (air_temperature,
+dewpoint_temperature, wind_speed, shortwave, precipitation_flux), with the
+gaps including longwave + pressure. NBM's genuine strength — calibrated,
+bias-corrected blended precipitation — is real, but HRRR/RAP/NAM already give
+clean CONUS precip forcing, so the marginal value does not justify shipping an
+incomplete forcing product. **Decision: keep deferred.** If revisited, the
+honest shape is an explicitly-partial product (documented missing LW/pressure)
+or a precip-only specialty product, not a general forcing connector.
 
 ---
 
