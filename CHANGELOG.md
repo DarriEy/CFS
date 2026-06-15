@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-15
+
+### Added
+
+- **ECMWF ENS ensemble** (`ecmwf_opendata:enfo_0p25`): the third ECMWF open-data
+  product — the 50-member ENS ensemble (`enfo` stream), returning a `member`
+  dimension (50 perturbed members; no control). Members are selected with
+  `config={"members": [...]}` (default all 50) and each de-accumulates `tp`/
+  `ssrd`/`strd` independently. 360 h for 00/12Z, 144 h for 06/18Z; 3-hourly to
+  144 h then 6-hourly. `grib_idx.parse_ecmwf_index` now also returns each
+  message's `number` (ensemble member; `None` for the deterministic stream),
+  which `_find` filters on. A full 50-member pull is many byte-range requests —
+  restrict the member list for quick fetches. Live-verified (member dimension +
+  per-member de-accumulation).
+
+### Fixed
+
+- **ECMWF dropped the first forecast step's precipitation/radiation** (regression
+  present since 0.4.0): de-accumulation subtracted the previous step's running
+  total, but the first forecast step's previous step is step 0, which carries no
+  accumulation baseline — so `tp`/`ssrd`/`strd` were silently skipped for that
+  first interval. ECMWF accumulates from t=0, so the first step's increment is
+  simply `acc(step)`; it is now kept, not dropped. Live-verified (IFS step 3
+  returns finite precip + shortwave); the network test asserts the first
+  timestep's accumulated fields are present.
+- **`grib_idx.open_message` could silently mislabel a combined-message component**:
+  when a `prefer`-ed component (e.g. a U/V wind packed in one GRIB message) was
+  absent from the decode, it fell back to the first variable and renamed it —
+  mislabeling one wind component as the other. It now raises instead of
+  returning plausible-but-wrong data. (Surfaced by an adversarial code audit.)
+
+### Changed
+
+- **`grib_idx.parse_ecmwf_index` coerces the ensemble `number` to `str`** (as it
+  already does for `step`), so ENS member matching is type-stable whether the
+  feed emits the member as a JSON string or integer.
+
 ## [0.4.1] — 2026-06-15
 
 ### Fixed
