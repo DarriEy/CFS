@@ -272,24 +272,28 @@ def parse_idx_records(text: str) -> list[tuple[str, str, int, int | str, str]]:
     return out
 
 
-def parse_ecmwf_index(text: str) -> list[tuple[str, str, str, int, int]]:
-    """Parse an ECMWF open-data ``.index`` into ``(param, levtype, step, offset, length)``.
+def parse_ecmwf_index(
+    text: str,
+) -> list[tuple[str, str, str, str | None, int, int]]:
+    """Parse an ECMWF ``.index`` into ``(param, levtype, step, number, offset, length)``.
 
     ECMWF's sidecar is one JSON object per line (not the NOAA colon ``.idx``),
     and gives each message's byte range **directly** via ``_offset``/``_length``
-    — so there is no next-start-minus-one arithmetic. Each file holds a single
-    forecast step, so ``(param, levtype)`` is unique within one index.
+    — so there is no next-start-minus-one arithmetic. ``number`` is the ensemble
+    member for the ``enfo`` stream (``"1"``…``"50"``) and ``None`` for the
+    deterministic ``oper`` stream; each (param, levtype, number) is unique within
+    one single-step index file.
     """
     import json
 
-    out: list[tuple[str, str, str, int, int]] = []
+    out: list[tuple[str, str, str, str | None, int, int]] = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
         r = json.loads(line)
         out.append(
-            (r.get("param"), r.get("levtype"), str(r.get("step")),
+            (r.get("param"), r.get("levtype"), str(r.get("step")), r.get("number"),
              int(r["_offset"]), int(r["_length"])),
         )
     return out
