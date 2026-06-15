@@ -1,10 +1,11 @@
 # CFS Provider Inventory
-# Total providers: 34 — 32 live-verified + 2 offline/access-gated.
+# Total providers: 35 — 33 live-verified + 2 offline/access-gated.
 # Forecasts: gfs (deterministic, global), gefs (ensemble, member dim, global),
-# hrrr:sfc_fcst (3km CONUS), rap (13km CONUS) — all via S3 GRIB2 byte-range +
-# cfgrib (shared grib_idx helper). gefs de-buckets accumulated/averaged precip +
-# radiation and derives specific humidity from RH; gfs/hrrr/rap ship instantaneous
-# SI identity fields (PRATE flux, instantaneous radiation, direct specific humidity).
+# hrrr:sfc_fcst (3km CONUS), rap (13km CONUS), nam (12km North America) — all via
+# S3 GRIB2 byte-range + cfgrib (shared grib_idx helper). gefs de-buckets
+# accumulated/averaged precip + radiation and derives specific humidity from RH;
+# nam de-accumulates APCP (12h-reset-aware) for precip; gfs/hrrr/rap ship
+# instantaneous SI identity fields (PRATE flux, instantaneous radiation, direct q).
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # verified: true = live-verified against the upstream store (auth-gated ones with
@@ -813,6 +814,32 @@
     - surface_downwelling_shortwave_flux    # DSWRF surface (from the bgrb file)
     - surface_downwelling_longwave_flux     # DLWRF surface (from the bgrb file)
   note: "Herbie-style: .idx byte-range + cfgrib (forecast extra), shared grib_idx helper. awp130 (13km LCC grid 130, CONUS). Forecast model like gfs/hrrr: most recent hourly cycle <= start supplies each valid hour (lead=valid-cycle), f00-f21 standard, f00-f51 on the 03/09/15/21Z runs. All instantaneous SI identity: PRATE is an instantaneous flux (NO de-accumulation), DSWRF/DLWRF instantaneous (NO de-averaging), SPFH direct (no derivation). Fields split across TWO files per lead: awp130pgrb (T/q/dewpoint/pressure/wind/PRATE) + awp130bgrb (radiation; absent from pgrb) — each lead fetches at most two .idx. 2-D LCC lat/lon from cfgrib, windowed via grid2d.read_field_2d. LIVE-VERIFIED (Colorado 2022-01-01 00z f00-f02: multi-lead, T in-range, precip>=0, SW from bgrb>=0)."
+  status: implemented
+  verified: true
+
+- slug: nam
+  name: NOAA NAM atmospheric forecast (12 km, North America, via S3 GRIB2)
+  protocol: http
+  base_url: https://noaa-nam-pds.s3.amazonaws.com
+  resolution_deg: 0.11           # ~12 km
+  grid: lcc_2d
+  auth: anonymous
+  bbox: [-152.0, 12.0, -49.0, 61.0]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA NCEP North American Mesoscale (NAM)."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # TMP 2 m (identity, K)
+    - specific_humidity                     # SPFH 2 m (direct, no derivation)
+    - dewpoint_temperature                  # DPT 2 m
+    - surface_air_pressure                  # PRES surface
+    - eastward_wind                         # UGRD 10 m
+    - northward_wind                        # VGRD 10 m
+    - surface_downwelling_shortwave_flux    # DSWRF surface (instantaneous)
+    - surface_downwelling_longwave_flux     # DLWRF surface (instantaneous)
+    - precipitation_flux                    # APCP de-accumulated (12h-reset-aware)
+  note: "Herbie-style: .idx byte-range + cfgrib (forecast extra), shared grib_idx helper. awphys (12km LCC grid 218, North America). Forecast model: most recent 00/06/12/18Z cycle <= start supplies each valid hour; leads HOURLY to f36, then 3-HOURLY to f84 (no f00 forcing). Instantaneous fields identity SI (incl. DSWRF/DLWRF instantaneous, SPFH direct). PRECIP is the awkward one: no PRATE, only APCP accumulation whose reference RESETS every 12h (ref=12*floor((N-1)/12)) with duplicate per-lead messages, so the connector selects the run-total APCP by its forecast-window string and de-accumulates per step (inc=runtotal at a reset boundary, else runtotal(N)-runtotal(N-step)), /(step*3600) -> flux. Only the 12km awphys product; 3km conusnest is a follow-up. LIVE-VERIFIED (2026-06-13 12z: multi-lead T/SW/precip; precip de-accum closed-loop EXACT vs NAM's own 3-6h bucket and 12-13h boundary run-total)."
   status: implemented
   verified: true
 

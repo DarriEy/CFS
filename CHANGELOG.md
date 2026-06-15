@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **NAM forecast connector** (`nam:awphys_fcst`): NOAA North American Mesoscale
+  surface forcing — 12 km Lambert Conformal North America (grid `awphys`/218) —
+  from the `noaa-nam-pds` GRIB2 archive via the shared Herbie machinery. Forecast
+  model like the others: most recent 00/06/12/18Z cycle ≤ start supplies each
+  valid hour; leads are **hourly to f36, then 3-hourly to f84**. The
+  instantaneous fields are identity SI (T/q/dewpoint/pressure/wind, and `DSWRF`/
+  `DLWRF` which are instantaneous here, not averaged); `SPFH` is direct.
+  **Precipitation** is the hard case: NAM ships no `PRATE`, only accumulated
+  `APCP` whose reference **resets every 12 h** (`ref = 12·⌊(N−1)/12⌋`) with
+  duplicate per-lead messages — so the connector selects the run-total `APCP`
+  message by its forecast-window string and de-accumulates per step
+  (`inc = runtotal(N)` at a reset boundary, else `runtotal(N) − runtotal(N−step)`),
+  then `÷ (step·3600)` to a flux. New `grib_idx` helpers support this:
+  `parse_idx_records` (retains the forecast-window field + precomputed end byte)
+  and `read_message_2d` (decode/window a message by explicit byte range). Only
+  the 12 km `awphys` product is offered; the 3 km `conusnest` is a follow-up.
+  Needs the `forecast` extra. Live-verified (2026-06-13 12z): multi-lead fields,
+  and the precip de-accumulation matches NAM's own independent buckets **exactly**
+  — sum of hourly increments over [3,6] == the `3-6 hour acc` bucket, and the
+  `f13` reset-boundary increment == the `12-13 hour acc` run-total (both checks
+  baked into the network test).
+
 - **RAP forecast connector** (`rap:awp130_fcst`): NOAA Rapid Refresh surface
   forcing — 13 km Lambert Conformal CONUS (grid `awp130`) — from the
   `noaa-rap-pds` GRIB2 archive via the shared Herbie `.idx` byte-range machinery

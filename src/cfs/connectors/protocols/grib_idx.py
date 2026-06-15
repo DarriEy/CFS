@@ -167,11 +167,53 @@ def read_field_2d(
     rng = byte_range(idx, grib_var, grib_level)
     if rng is None:
         return None
-    ds = open_message(http_range(url, rng[0], rng[1]), internal, label=label)
+    return read_message_2d(url, rng[0], rng[1], internal, bbox, label=label, buffer=buffer)
+
+
+def read_message_2d(
+    url: str,
+    start: int,
+    end: int | str,
+    internal: str,
+    bbox: BoundingBox,
+    *,
+    label: str = "GRIB",
+    buffer: int = 2,
+) -> xr.Dataset:
+    """Byte-range fetch + decode + 2-D bbox-window one message at ``[start, end]``.
+
+    The decode/window half of :func:`read_field_2d`, split out so a caller that
+    selected a message by something other than ``(var, level)`` — e.g. a
+    forecast-window string (NAM's run-total vs 3-hour APCP) — can reuse it.
+    """
+    ds = open_message(http_range(url, start, end), internal, label=label)
     return cast(
         "xr.Dataset",
         subset_2d_grid(ds, bbox, lat_name=_LAT, lon_name=_LON, buffer=buffer),
     )
+
+
+def parse_idx_records(text: str) -> list[tuple[str, str, int, int | str, str]]:
+    """Parse a ``.idx`` into ordered ``(var, level, start, end, fcst)`` records.
+
+    Like :func:`parse_idx` but retains the forecast-window field (``parts[5]``)
+    and precomputes each message's end byte (next start − 1; ``""`` for the
+    last), so a caller can disambiguate messages that share ``(var, level)`` but
+    differ by accumulation window — e.g. NAM's run-total (``0-12 hour acc``) vs
+    its 3-hour bucket (``9-12 hour acc``) ``APCP`` messages.
+    """
+    rows: list[tuple[str, str, int, str]] = []
+    for line in text.splitlines():
+        if not line:
+            continue
+        p = line.split(":")
+        if len(p) >= 6:
+            rows.append((p[3], p[4], int(p[1]), p[5]))
+    out: list[tuple[str, str, int, int | str, str]] = []
+    for i, (v, lv, sb, fc) in enumerate(rows):
+        end: int | str = rows[i + 1][2] - 1 if i + 1 < len(rows) else ""
+        out.append((v, lv, sb, end, fc))
+    return out
 
 
 def debucket(cur: xr.Dataset, prev: xr.Dataset, kind: str) -> xr.Dataset:
