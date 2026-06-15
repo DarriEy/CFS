@@ -90,20 +90,44 @@ def byte_range(
     """Locate the ``(start, end)`` byte range of one ``(var, level)`` message.
 
     Returns ``None`` if the message is absent (e.g. radiation/precip at f000),
-    and ``end=""`` for the final message in the file.
+    and ``end=""`` for the final message in the file. The end is the next message
+    with a **strictly greater** start byte: some products co-locate fields in one
+    GRIB message (e.g. RAP/NAM pack 10 m U and V wind together, so both ``.idx``
+    entries share an offset), and the naive next-row end would be ``start − 1``.
     """
     for i, (v, lv, sb) in enumerate(idx):
         if v == grib_var and lv == grib_level:
-            return sb, (idx[i + 1][2] - 1 if i + 1 < len(idx) else "")
+            return sb, _end_after(sb, [r[2] for r in idx[i + 1:]])
     return None
 
 
-def open_message(raw: bytes, internal: str, *, label: str = "GRIB") -> xr.Dataset:
+def _end_after(start: int, later_starts: list[int]) -> int | str:
+    """End byte = (first later start strictly greater than ``start``) − 1, or ``""``."""
+    for nsb in later_starts:
+        if nsb > start:
+            return nsb - 1
+    return ""
+
+
+# NOAA products that pack >1 field in a single GRIB message (RAP/NAM put 10 m
+# U and V wind in one message). Maps the .idx GRIB var name to the cfgrib
+# variable name to extract from the multi-variable decode (see ``prefer`` below).
+COMBINED_WIND_CFNAME = {"UGRD": "u10", "VGRD": "v10"}
+
+
+def open_message(
+    raw: bytes, internal: str, *, label: str = "GRIB", prefer: str | None = None
+) -> xr.Dataset:
     """Decode one GRIB message (bytes) with cfgrib → a single-variable Dataset.
 
     The decoded variable is renamed to ``internal`` and all GRIB scalar coords
     (step/valid_time/heightAboveGround/surface/number…) are dropped, keeping
     only ``latitude``/``longitude``. ``label`` only flavours the error message.
+
+    A few NOAA products pack more than one field in a single GRIB message (e.g.
+    RAP/NAM 10 m U+V wind). When the decode yields several variables, ``prefer``
+    (a cfgrib variable name such as ``"u10"``) selects the requested component;
+    otherwise the first variable is used.
     """
     import xarray as xr
 
@@ -117,7 +141,8 @@ def open_message(raw: bytes, internal: str, *, label: str = "GRIB") -> xr.Datase
     data_vars = list(ds.data_vars)
     if not data_vars:
         raise SubsetError(f"{label} message for {internal} decoded no variable")
-    ds = ds[[data_vars[0]]].rename({data_vars[0]: internal})
+    name = prefer if (prefer is not None and prefer in data_vars) else data_vars[0]
+    ds = ds[[name]].rename({name: internal})
     drop = [c for c in ds.coords if c not in (_LAT, _LON)]
     return ds.drop_vars(drop, errors="ignore")
 
@@ -131,16 +156,18 @@ def read_field(
     bbox: BoundingBox,
     *,
     label: str = "GRIB",
+    prefer: str | None = None,
 ) -> xr.Dataset | None:
     """Byte-range fetch + decode + bbox-subset one ``(var, level)`` field, or ``None``.
 
     Returns ``None`` when the message is absent from the ``.idx`` (the caller
     treats this as "not available at this lead", e.g. f000 radiation/precip).
+    ``prefer`` selects a component from a multi-variable (combined) message.
     """
     rng = byte_range(idx, grib_var, grib_level)
     if rng is None:
         return None
-    return read_message(url, rng[0], rng[1], internal, bbox, label=label)
+    return read_message(url, rng[0], rng[1], internal, bbox, label=label, prefer=prefer)
 
 
 def read_message(
@@ -151,6 +178,7 @@ def read_message(
     bbox: BoundingBox,
     *,
     label: str = "GRIB",
+    prefer: str | None = None,
 ) -> xr.Dataset:
     """Byte-range fetch + decode + regular-grid bbox-subset one message at ``[start, end]``.
 
@@ -158,8 +186,9 @@ def read_message(
     selected a message by something other than ``(var, level)`` — e.g. an ECMWF
     ``.index`` ``_offset``/``_length`` — can reuse it. Regular 1-D lat/lon grid
     (0–360 longitude is normalized by :func:`cfs.subset.bbox.plan_bbox_subset`).
+    ``prefer`` selects a component from a multi-variable (combined) message.
     """
-    ds = open_message(http_range(url, start, end), internal, label=label)
+    ds = open_message(http_range(url, start, end), internal, label=label, prefer=prefer)
     plan = plan_bbox_subset(ds, bbox, lat_name=_LAT, lon_name=_LON)
     # apply_bbox_subset is typed Any (xarray's stubs are incomplete); the subset of
     # a single-variable Dataset is still a Dataset.
@@ -176,6 +205,7 @@ def read_field_2d(
     *,
     label: str = "GRIB",
     buffer: int = 2,
+    prefer: str | None = None,
 ) -> xr.Dataset | None:
     """Like :func:`read_field` but for **projected 2-D grids** (LCC HRRR/RAP/NAM).
 
@@ -183,11 +213,13 @@ def read_field_2d(
     dims, so the bbox is applied as an index window on those dims
     (:func:`cfs.subset.grid2d.subset_2d_grid`) rather than by 1-D coordinate
     slicing. Returns ``None`` when the message is absent from the ``.idx``.
+    ``prefer`` selects a component from a multi-variable (combined) message.
     """
     rng = byte_range(idx, grib_var, grib_level)
     if rng is None:
         return None
-    return read_message_2d(url, rng[0], rng[1], internal, bbox, label=label, buffer=buffer)
+    return read_message_2d(url, rng[0], rng[1], internal, bbox,
+                           label=label, buffer=buffer, prefer=prefer)
 
 
 def read_message_2d(
@@ -199,14 +231,16 @@ def read_message_2d(
     *,
     label: str = "GRIB",
     buffer: int = 2,
+    prefer: str | None = None,
 ) -> xr.Dataset:
     """Byte-range fetch + decode + 2-D bbox-window one message at ``[start, end]``.
 
     The decode/window half of :func:`read_field_2d`, split out so a caller that
     selected a message by something other than ``(var, level)`` — e.g. a
     forecast-window string (NAM's run-total vs 3-hour APCP) — can reuse it.
+    ``prefer`` selects a component from a multi-variable (combined) message.
     """
-    ds = open_message(http_range(url, start, end), internal, label=label)
+    ds = open_message(http_range(url, start, end), internal, label=label, prefer=prefer)
     return cast(
         "xr.Dataset",
         subset_2d_grid(ds, bbox, lat_name=_LAT, lon_name=_LON, buffer=buffer),
@@ -217,10 +251,12 @@ def parse_idx_records(text: str) -> list[tuple[str, str, int, int | str, str]]:
     """Parse a ``.idx`` into ordered ``(var, level, start, end, fcst)`` records.
 
     Like :func:`parse_idx` but retains the forecast-window field (``parts[5]``)
-    and precomputes each message's end byte (next start − 1; ``""`` for the
-    last), so a caller can disambiguate messages that share ``(var, level)`` but
-    differ by accumulation window — e.g. NAM's run-total (``0-12 hour acc``) vs
-    its 3-hour bucket (``9-12 hour acc``) ``APCP`` messages.
+    and precomputes each message's end byte, so a caller can disambiguate messages
+    that share ``(var, level)`` but differ by accumulation window — e.g. NAM's
+    run-total (``0-12 hour acc``) vs its 3-hour bucket (``9-12 hour acc``)
+    ``APCP`` messages. The end is the next message with a **strictly greater**
+    start byte, so fields co-located in one GRIB message (e.g. NAM 10 m U+V wind,
+    which share an offset) get the full message extent rather than ``start − 1``.
     """
     rows: list[tuple[str, str, int, str]] = []
     for line in text.splitlines():
@@ -229,10 +265,10 @@ def parse_idx_records(text: str) -> list[tuple[str, str, int, int | str, str]]:
         p = line.split(":")
         if len(p) >= 6:
             rows.append((p[3], p[4], int(p[1]), p[5]))
+    starts = [r[2] for r in rows]
     out: list[tuple[str, str, int, int | str, str]] = []
     for i, (v, lv, sb, fc) in enumerate(rows):
-        end: int | str = rows[i + 1][2] - 1 if i + 1 < len(rows) else ""
-        out.append((v, lv, sb, end, fc))
+        out.append((v, lv, sb, _end_after(sb, starts[i + 1:]), fc))
     return out
 
 

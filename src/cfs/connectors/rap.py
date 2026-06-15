@@ -37,7 +37,13 @@ from typing import TYPE_CHECKING
 import structlog
 
 from cfs.connectors.base import BaseForcingConnector
-from cfs.connectors.protocols.grib_idx import cycle_for, http_range, parse_idx, read_field_2d
+from cfs.connectors.protocols.grib_idx import (
+    COMBINED_WIND_CFNAME,
+    cycle_for,
+    http_range,
+    parse_idx,
+    read_field_2d,
+)
 from cfs.core.config import get_settings
 from cfs.core.exceptions import MissingExtraError, SubsetError
 from cfs.core.models import (
@@ -184,9 +190,12 @@ class RAPConnector(BaseForcingConnector):
                     continue
                 url = _file_url(cycle, lead, source)
                 idx = parse_idx(http_range(url + ".idx", 0, "").decode())
+                # RAP packs 10 m U+V in one GRIB message (shared .idx offset);
+                # prefer pulls the right component from that combined message.
                 per_var.extend(
                     f for var, level, _c, _s in fields
-                    if (f := read_field_2d(url, idx, var, level, var, bbox, label="RAP")) is not None
+                    if (f := read_field_2d(url, idx, var, level, var, bbox, label="RAP",
+                                           prefer=COMBINED_WIND_CFNAME.get(var))) is not None
                 )
             if not per_var:
                 return None

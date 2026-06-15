@@ -1,11 +1,13 @@
 # CFS Provider Inventory
 # Total providers: 36 — 34 live-verified + 2 offline/access-gated.
 # Forecasts: gfs + gefs (NOAA global), hrrr:sfc_fcst (3km CONUS), rap (13km CONUS),
-# nam (12km North America), ecmwf_opendata (ECMWF IFS HRES + AIFS, global) — all
-# via GRIB2 byte-range + cfgrib (shared grib_idx helper). gefs de-buckets
+# nam (12km NA + 3km CONUS nest), ecmwf_opendata (ECMWF IFS HRES + AIFS, global) —
+# all via GRIB2 byte-range + cfgrib (shared grib_idx helper). gefs de-buckets
 # accumulated/averaged precip + radiation and derives q from RH; nam de-accumulates
 # APCP (12h-reset-aware); ecmwf_opendata de-accumulates tp/ssrd/strd (JSON .index,
-# byte range direct); gfs/hrrr/rap ship instantaneous SI identity fields.
+# byte range direct); gfs/hrrr/rap/nam-nest ship instantaneous SI identity fields.
+# RAP/NAM pack 10m U+V in one GRIB message (shared .idx offset) — grib_idx handles
+# it (skip-co-located byte ranges + open_message prefer= component selection).
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # verified: true = live-verified against the upstream store (auth-gated ones with
@@ -818,17 +820,17 @@
   verified: true
 
 - slug: nam
-  name: NOAA NAM atmospheric forecast (12 km, North America, via S3 GRIB2)
+  name: NOAA NAM atmospheric forecast (12 km NA + 3 km CONUS nest, via S3 GRIB2)
   protocol: http
   base_url: https://noaa-nam-pds.s3.amazonaws.com
-  resolution_deg: 0.11           # ~12 km
+  resolution_deg: 0.11           # ~12 km (awphys); conusnest ~0.027 (~3 km)
   grid: lcc_2d
   auth: anonymous
   bbox: [-152.0, 12.0, -49.0, 61.0]
   temporal_resolution: hourly
   license: "U.S. Government work / NOAA Open Data (public domain)"
   citation: "NOAA NCEP North American Mesoscale (NAM)."
-  products: 1
+  products: 2                  # awphys_fcst (12km NA) + conusnest_fcst (3km CONUS)
   canonical_variables:
     - air_temperature                       # TMP 2 m (identity, K)
     - specific_humidity                     # SPFH 2 m (direct, no derivation)
@@ -839,7 +841,7 @@
     - surface_downwelling_shortwave_flux    # DSWRF surface (instantaneous)
     - surface_downwelling_longwave_flux     # DLWRF surface (instantaneous)
     - precipitation_flux                    # APCP de-accumulated (12h-reset-aware)
-  note: "Herbie-style: .idx byte-range + cfgrib (forecast extra), shared grib_idx helper. awphys (12km LCC grid 218, North America). Forecast model: most recent 00/06/12/18Z cycle <= start supplies each valid hour; leads HOURLY to f36, then 3-HOURLY to f84 (no f00 forcing). Instantaneous fields identity SI (incl. DSWRF/DLWRF instantaneous, SPFH direct). PRECIP is the awkward one: no PRATE, only APCP accumulation whose reference RESETS every 12h (ref=12*floor((N-1)/12)) with duplicate per-lead messages, so the connector selects the run-total APCP by its forecast-window string and de-accumulates per step (inc=runtotal at a reset boundary, else runtotal(N)-runtotal(N-step)), /(step*3600) -> flux. Only the 12km awphys product; 3km conusnest is a follow-up. LIVE-VERIFIED (2026-06-13 12z: multi-lead T/SW/precip; precip de-accum closed-loop EXACT vs NAM's own 3-6h bucket and 12-13h boundary run-total)."
+  note: "Herbie-style: .idx byte-range + cfgrib (forecast extra), shared grib_idx helper. TWO products, both 2-D LCC. awphys_fcst: 12km North America (grid 218), leads HOURLY to f36 then 3-HOURLY to f84; PRECIP via APCP de-accumulation (no PRATE) whose reference RESETS every 12h (ref=12*floor((N-1)/12)) — the connector selects the run-total APCP by its forecast-window string and de-accumulates per step (inc=runtotal at a reset boundary, else runtotal(N)-runtotal(N-step)), /(step*3600)->flux. conusnest_fcst: 3km CONUS nest, hourly to f60, ALL-instantaneous identity SI incl. an instantaneous PRATE flux (the nest also ships ave/max variants, so the instantaneous message is pinned by its '{lead} hour fcst' window). Both: most recent 00/06/12/18Z cycle <= start (no f00 forcing). NOTE: NAM packs 10m U+V in ONE GRIB message (shared .idx offset) — handled via grib_idx skip-co-located byte ranges + open_message prefer= component selection (shared with RAP). LIVE-VERIFIED (2026-06): awphys precip de-accum closed-loop EXACT vs NAM's 3-6h bucket + 12-13h boundary; winds eastward==u10/northward==v10 (not swapped); conusnest multi-lead winds+precip+SW."
 - slug: ecmwf_opendata
   name: ECMWF open-data IFS HRES + AIFS forecast (0.25°, global, via AWS GRIB2)
   protocol: http

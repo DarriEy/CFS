@@ -50,6 +50,7 @@ import structlog
 
 from cfs.connectors.base import BaseForcingConnector
 from cfs.connectors.protocols.grib_idx import (
+    COMBINED_WIND_CFNAME,
     cycle_for,
     http_range,
     parse_idx_records,
@@ -92,25 +93,47 @@ _INST_FIELDS: list[tuple[str, str, CanonicalVar]] = [
     ("DSWRF", "surface", CanonicalVar.SHORTWAVE_RADIATION_DOWN),
     ("DLWRF", "surface", CanonicalVar.LONGWAVE_RADIATION_DOWN),
 ]
-# APCP is de-accumulated to a flux in the connector, then mapped by identity.
-_PRECIP_INTERNAL = "APCP"
-_MAPPINGS: list[VariableMapping] = [
-    VariableMapping(var, canon) for var, _l, canon in _INST_FIELDS
-] + [VariableMapping(_PRECIP_INTERNAL, CanonicalVar.PRECIPITATION_FLUX)]
+_INST_MAPPINGS = [VariableMapping(var, canon) for var, _l, canon in _INST_FIELDS]
+# awphys de-accumulates APCP to a flux; conusnest ships an instantaneous PRATE
+# flux directly. Both map to precipitation_flux by identity.
+_MAPPINGS_APCP: list[VariableMapping] = [
+    *_INST_MAPPINGS, VariableMapping("APCP", CanonicalVar.PRECIPITATION_FLUX)
+]
+_MAPPINGS_PRATE: list[VariableMapping] = [
+    *_INST_MAPPINGS, VariableMapping("PRATE", CanonicalVar.PRECIPITATION_FLUX)
+]
 
-_MAX_LEAD = 84
-_HOURLY_MAX = 36  # hourly to f36, 3-hourly after
+# Two products. awphys: 12 km North America, hourly to f36 then 3-hourly to f84,
+# precip via 12 h-reset-aware APCP de-accumulation (no PRATE). conusnest: 3 km
+# CONUS nest, hourly to f60, all-instantaneous identity SI — including an
+# instantaneous PRATE flux and instantaneous DSWRF/DLWRF (the nest also publishes
+# ave/max radiation + max precip, so the instantaneous message is selected by its
+# "{lead} hour fcst" window string). Live-probed 2026-06-15.
+_PRODUCTS: dict[str, dict] = {
+    "awphys_fcst": {
+        "name": "NAM 12 km surface forecast (awphys, North America)",
+        "grid": "awphys", "domain": "North America", "res": 0.11,
+        "bbox": (-152.0, 12.0, -49.0, 61.0),
+        "max_lead": 84, "hourly_max": 36, "precip": "apcp",
+    },
+    "conusnest_fcst": {
+        "name": "NAM 3 km surface forecast (CONUS nest)",
+        "grid": "conusnest", "domain": "CONUS", "res": 0.027,
+        "bbox": (-134.0, 21.0, -61.0, 53.0),
+        "max_lead": 60, "hourly_max": 60, "precip": "prate",
+    },
+}
 
 
-def _lead_available(lead: int) -> bool:
-    if not (1 <= lead <= _MAX_LEAD):
+def _lead_available(lead: int, max_lead: int, hourly_max: int) -> bool:
+    if not (1 <= lead <= max_lead):
         return False
-    return lead <= _HOURLY_MAX or lead % 3 == 0
+    return lead <= hourly_max or lead % 3 == 0
 
 
-def _lead_step(lead: int) -> int:
-    """The forecast lead spacing at ``lead`` (1 h to f36, 3 h after)."""
-    return 1 if lead <= _HOURLY_MAX else 3
+def _lead_step(lead: int, hourly_max: int) -> int:
+    """The forecast lead spacing at ``lead`` (1 h to ``hourly_max``, 3 h after)."""
+    return 1 if lead <= hourly_max else 3
 
 
 def _accum_ref(lead: int) -> int:
@@ -118,8 +141,11 @@ def _accum_ref(lead: int) -> int:
     return 12 * ((lead - 1) // 12)
 
 
-def _file_url(cycle: datetime, lead: int) -> str:
-    return f"{GRIB_BASE}/nam.{cycle:%Y%m%d}/nam.t{cycle:%H}z.awphys{lead:02d}.tm00.grib2"
+def _file_url(grid: str, cycle: datetime, lead: int) -> str:
+    d, h = cycle.strftime("%Y%m%d"), cycle.strftime("%H")
+    if grid == "conusnest":
+        return f"{GRIB_BASE}/nam.{d}/nam.t{h}z.conusnest.hiresf{lead:02d}.tm00.grib2"
+    return f"{GRIB_BASE}/nam.{d}/nam.t{h}z.awphys{lead:02d}.tm00.grib2"
 
 
 def _find(records, grib_var: str, grib_level: str, fcst: str | None = None):
@@ -138,32 +164,42 @@ class NAMConnector(BaseForcingConnector):
     protocol = "http"
 
     async def list_products(self) -> list[ForcingProduct]:
-        return [
-            ForcingProduct(
-                id=f"{self.slug}:awphys_fcst",
-                provider=self.slug,
-                name="NAM 12 km surface forecast (awphys, North America)",
-                description=(
-                    "NOAA North American Mesoscale surface forcing, byte-range read "
-                    "from the GRIB2 awphys files on the noaa-nam-pds S3 archive. The "
-                    "most recent 00/06/12/18Z cycle at/before the requested start "
-                    "supplies the valid-time forcing (hourly to f36, 3-hourly to "
-                    "f84). Instantaneous fields plus 12-hourly-reset-aware "
-                    "de-accumulated precipitation_flux."
-                ),
-                variables=[
-                    ProductVariable(canonical=m.canonical, source_name=m.source_name)
-                    for m in _MAPPINGS
-                ],
-                resolution_deg=0.11,  # ~12 km
-                crs="EPSG:4326",
-                bbox=BoundingBox(min_lon=-152.0, min_lat=12.0, max_lon=-49.0, max_lat=61.0),
-                temporal=TemporalExtent(resolution=TemporalResolution.HOURLY),
-                protocol=Protocol.REST,
-                license="U.S. Government work / NOAA Open Data (public domain)",
-                citation="NOAA NCEP North American Mesoscale (NAM).",
+        products = []
+        for suffix, spec in _PRODUCTS.items():
+            mappings = _MAPPINGS_APCP if spec["precip"] == "apcp" else _MAPPINGS_PRATE
+            lo, la, hi, ha = spec["bbox"]
+            if spec["precip"] == "apcp":
+                precip_desc = "12-hourly-reset-aware de-accumulated precipitation_flux"
+                lead_desc = "hourly to f36, 3-hourly to f84"
+            else:
+                precip_desc = "instantaneous precipitation_flux (PRATE)"
+                lead_desc = "hourly to f60"
+            products.append(
+                ForcingProduct(
+                    id=f"{self.slug}:{suffix}",
+                    provider=self.slug,
+                    name=spec["name"],
+                    description=(
+                        f"NOAA North American Mesoscale surface forcing ({spec['domain']}), "
+                        "byte-range read from the GRIB2 files on the noaa-nam-pds S3 "
+                        "archive. The most recent 00/06/12/18Z cycle at/before the "
+                        f"requested start supplies the valid-time forcing ({lead_desc}). "
+                        f"Instantaneous fields plus {precip_desc}."
+                    ),
+                    variables=[
+                        ProductVariable(canonical=m.canonical, source_name=m.source_name)
+                        for m in mappings
+                    ],
+                    resolution_deg=spec["res"],
+                    crs="EPSG:4326",
+                    bbox=BoundingBox(min_lon=lo, min_lat=la, max_lon=hi, max_lat=ha),
+                    temporal=TemporalExtent(resolution=TemporalResolution.HOURLY),
+                    protocol=Protocol.REST,
+                    license="U.S. Government work / NOAA Open Data (public domain)",
+                    citation="NOAA NCEP North American Mesoscale (NAM).",
+                )
             )
-        ]
+        return products
 
     @staticmethod
     def _require_cfgrib() -> None:
@@ -187,6 +223,9 @@ class NAMConnector(BaseForcingConnector):
 
         t0 = time.monotonic()
         product = self._require_product(product_id, await self.list_products())
+        spec = _PRODUCTS[product_id.split(":", 1)[1]]
+        grid, max_lead, hourly_max = spec["grid"], spec["max_lead"], spec["hourly_max"]
+        mappings = _MAPPINGS_APCP if spec["precip"] == "apcp" else _MAPPINGS_PRATE
         settings = get_settings()
         self._guard_area(bbox, settings)
         self._require_cfgrib()
@@ -201,42 +240,53 @@ class NAMConnector(BaseForcingConnector):
         valid_times = pd.date_range(time_range.start, time_range.end, freq="h")
         warnings: list[str] = []
 
-        def _precip_flux(url, records, lead):
+        def _apcp_flux(url, records, lead):
             """De-accumulate the run-total APCP at ``lead`` to a per-step flux cube."""
-            ref, step = _accum_ref(lead), _lead_step(lead)
+            ref, step = _accum_ref(lead), _lead_step(lead, hourly_max)
             cur_rng = _find(records, "APCP", "surface", f"{ref}-{lead} hour acc fcst")
             if cur_rng is None:
                 return None
-            cur = read_message_2d(url, cur_rng[0], cur_rng[1], _PRECIP_INTERNAL, bbox, label="NAM")
+            cur = read_message_2d(url, cur_rng[0], cur_rng[1], "APCP", bbox, label="NAM")
             prev_lead = lead - step
             if prev_lead != ref:
                 # Same 12 h block: subtract the previous lead's run-total (ref-prev_lead).
-                purl = _file_url(cycle, prev_lead)
+                purl = _file_url(grid, cycle, prev_lead)
                 precs = parse_idx_records(http_range(purl + ".idx", 0, "").decode())
                 prng = _find(precs, "APCP", "surface", f"{ref}-{prev_lead} hour acc fcst")
                 if prng is None:
                     return None  # cannot de-accumulate without the previous run-total
-                prev = read_message_2d(purl, prng[0], prng[1], _PRECIP_INTERNAL, bbox, label="NAM")
+                prev = read_message_2d(purl, prng[0], prng[1], "APCP", bbox, label="NAM")
                 cur = cur - prev
             return (cur / (step * 3600.0)).clip(min=0)
 
         def _piece(valid):
             lead = int((valid - cycle).total_seconds() // 3600)
-            if not _lead_available(lead):
+            if not _lead_available(lead, max_lead, hourly_max):
                 warnings.append(
-                    f"NAM lead f{lead:02d} (valid {valid:%Y-%m-%dT%H}) unavailable "
-                    f"from cycle {cycle:%Y%m%d %Hz} (f01–f36 hourly, then 3-hourly to f84)"
+                    f"NAM {grid} lead f{lead:02d} (valid {valid:%Y-%m-%dT%H}) unavailable "
+                    f"from cycle {cycle:%Y%m%d %Hz}"
                 )
                 return None
-            url = _file_url(cycle, lead)
+            url = _file_url(grid, cycle, lead)
             records = parse_idx_records(http_range(url + ".idx", 0, "").decode())
+            # The nest publishes ave/max variants too, so pin the instantaneous
+            # message by its "{lead} hour fcst" window; awphys has only the one.
+            inst_fcst = f"{lead} hour fcst" if grid == "conusnest" else None
             per_var = []
             for var, level, _c in selected_inst:
-                rng = _find(records, var, level)
+                rng = _find(records, var, level, inst_fcst)
                 if rng is not None:
-                    per_var.append(read_message_2d(url, rng[0], rng[1], var, bbox, label="NAM"))
+                    # NAM packs 10 m U+V in one GRIB message (shared .idx offset);
+                    # prefer pulls the right component from that combined message.
+                    per_var.append(read_message_2d(url, rng[0], rng[1], var, bbox, label="NAM",
+                                                   prefer=COMBINED_WIND_CFNAME.get(var)))
             if want_precip:
-                flux = _precip_flux(url, records, lead)
+                if spec["precip"] == "apcp":
+                    flux = _apcp_flux(url, records, lead)
+                else:  # conusnest: instantaneous PRATE flux (identity)
+                    prng = _find(records, "PRATE", "surface", f"{lead} hour fcst")
+                    flux = (read_message_2d(url, prng[0], prng[1], "PRATE", bbox, label="NAM")
+                            if prng is not None else None)
                 if flux is not None:
                     per_var.append(flux)
             if not per_var:
@@ -252,7 +302,9 @@ class NAMConnector(BaseForcingConnector):
             )
         ds_all = xr.concat(pieces, dim="time").sortby("time") if len(pieces) > 1 else pieces[0]
 
-        canonical = harmonize(ds_all, _MAPPINGS, requested=variables,
+        precip_note = ("APCP de-accumulated (12 h reset-aware)" if spec["precip"] == "apcp"
+                       else "instantaneous PRATE")
+        canonical = harmonize(ds_all, mappings, requested=variables,
                               lat_name="latitude", lon_name="longitude")
         return canonical, self._finalize(
             canonical,
@@ -260,8 +312,8 @@ class NAMConnector(BaseForcingConnector):
             bbox=bbox,
             time_range=time_range,
             provenance=(
-                f"NAM awphys via noaa-nam-pds S3 byte-range (cfgrib); "
-                f"cycle {cycle:%Y%m%d %Hz}; APCP de-accumulated (12 h reset-aware); canonical-v1"
+                f"NAM {grid} via noaa-nam-pds S3 byte-range (cfgrib); "
+                f"cycle {cycle:%Y%m%d %Hz}; {precip_note}; canonical-v1"
             ),
             t0=t0,
             settings=settings,

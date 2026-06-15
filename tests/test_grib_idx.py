@@ -15,6 +15,7 @@ from cfs.connectors.protocols.grib_idx import (
     cycle_for,
     debucket,
     parse_idx,
+    parse_idx_records,
 )
 
 
@@ -44,6 +45,33 @@ def test_byte_range_last_message_is_open_ended():
 def test_byte_range_absent_message_is_none():
     idx = [("TMP", "surface", 0)]
     assert byte_range(idx, "DSWRF", "surface") is None  # e.g. radiation at f000
+
+
+def test_byte_range_combined_message_shared_offset():
+    # RAP/NAM pack 10 m U+V in ONE GRIB message, so both .idx entries share an
+    # offset. Each must get the FULL message extent (to the next strictly-greater
+    # start), not the naive next-row end (which would be start-1, i.e. end<start).
+    idx = [
+        ("UGRD", "10 m above ground", 100),
+        ("VGRD", "10 m above ground", 100),  # same offset → combined message
+        ("PRATE", "surface", 500),
+    ]
+    assert byte_range(idx, "UGRD", "10 m above ground") == (100, 499)
+    assert byte_range(idx, "VGRD", "10 m above ground") == (100, 499)
+
+
+def test_parse_idx_records_combined_message_shared_offset():
+    # Same shared-offset handling in the forecast-window-aware parser (NAM path).
+    text = (
+        "1:100:d=2026:UGRD:10 m above ground:4 hour fcst:\n"
+        "2:100:d=2026:VGRD:10 m above ground:4 hour fcst:\n"
+        "3:500:d=2026:PRATE:surface:4 hour fcst:\n"
+    )
+    recs = parse_idx_records(text)
+    # both wind entries span the whole combined message [100, 499]
+    assert (recs[0][2], recs[0][3]) == (100, 499)
+    assert (recs[1][2], recs[1][3]) == (100, 499)
+    assert (recs[2][2], recs[2][3]) == (500, "")
 
 
 def test_cycle_for_6h_default_matches_gfs_gefs():

@@ -33,17 +33,51 @@ async def test_nam_forecast_fields_and_grid():
     async with conn_cls() as conn:
         ds, result = await conn.fetch(
             "nam:awphys_fcst", _BBOX, tr,
+            # Winds are REQUESTED here on purpose: NAM packs 10 m U+V in one GRIB
+            # message, a case that the byte-range-per-field model used to mishandle.
             variables=[CanonicalVar.AIR_TEMPERATURE, CanonicalVar.SHORTWAVE_RADIATION_DOWN,
-                       CanonicalVar.PRECIPITATION_FLUX],
+                       CanonicalVar.PRECIPITATION_FLUX,
+                       CanonicalVar.EASTWARD_WIND, CanonicalVar.NORTHWARD_WIND],
         )
         ds = ds.load()
     assert set(ds.data_vars) == {CanonicalVar.AIR_TEMPERATURE,
                                  CanonicalVar.SHORTWAVE_RADIATION_DOWN,
-                                 CanonicalVar.PRECIPITATION_FLUX}
+                                 CanonicalVar.PRECIPITATION_FLUX,
+                                 CanonicalVar.EASTWARD_WIND, CanonicalVar.NORTHWARD_WIND}
     assert result.n_times == 3
     assert "cycle 20260613 12z" in result.provenance
     assert ds["latitude"].ndim == 2
     assert 270.0 < float(ds[CanonicalVar.AIR_TEMPERATURE].mean()) < 320.0
+    # U and V come from the same combined message; they must be the distinct
+    # components (not the same one twice), and finite.
+    u = ds[CanonicalVar.EASTWARD_WIND].values
+    v = ds[CanonicalVar.NORTHWARD_WIND].values
+    assert np.isfinite(u).any() and not np.allclose(u, v)
+    assert float(np.nanmax(np.abs(u))) < 120.0 and float(np.nanmax(np.abs(v))) < 120.0
+
+
+@pytest.mark.network
+async def test_nam_conusnest_instantaneous_fields():
+    # 3 km CONUS nest: all-instantaneous identity SI (PRATE flux, no APCP de-accum),
+    # incl. the combined U/V winds.
+    discover()
+    conn_cls = get_connector("nam")
+    tr = TimeRange(start=_CYCLE + timedelta(hours=4), end=_CYCLE + timedelta(hours=6))
+    async with conn_cls() as conn:
+        ds, result = await conn.fetch(
+            "nam:conusnest_fcst", _BBOX, tr,
+            variables=[CanonicalVar.AIR_TEMPERATURE, CanonicalVar.PRECIPITATION_FLUX,
+                       CanonicalVar.EASTWARD_WIND, CanonicalVar.NORTHWARD_WIND],
+        )
+        ds = ds.load()
+    assert set(ds.data_vars) == {CanonicalVar.AIR_TEMPERATURE, CanonicalVar.PRECIPITATION_FLUX,
+                                 CanonicalVar.EASTWARD_WIND, CanonicalVar.NORTHWARD_WIND}
+    assert result.n_times == 3
+    assert "conusnest" in result.provenance
+    assert ds["latitude"].ndim == 2
+    assert float(ds[CanonicalVar.PRECIPITATION_FLUX].min()) >= 0.0
+    assert not np.allclose(ds[CanonicalVar.EASTWARD_WIND].values,
+                           ds[CanonicalVar.NORTHWARD_WIND].values)
     assert float(ds[CanonicalVar.PRECIPITATION_FLUX].min()) >= 0.0
 
 
