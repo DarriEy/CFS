@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **RAP forecast connector** (`rap:awp130_fcst`): NOAA Rapid Refresh surface
+  forcing — 13 km Lambert Conformal CONUS (grid `awp130`) — from the
+  `noaa-rap-pds` GRIB2 archive via the shared Herbie `.idx` byte-range machinery
+  (`cfs.connectors.protocols.grib_idx`). Same forecast model as `gfs`/`hrrr`:
+  the most recent hourly cycle at/before the start supplies each valid hour
+  (`lead = valid − cycle`), to f21 (f51 on the 03/09/15/21Z runs). All fields
+  are instantaneous SI (identity): `PRATE` is an instantaneous precipitation
+  flux (no de-accumulation), `DSWRF`/`DLWRF` are instantaneous (no
+  de-averaging), `SPFH` 2 m is direct (no derivation). Live-probe finding: the
+  surface **radiation is absent from the primary `awp130pgrb`** file and lives
+  in the secondary `awp130bgrb`, so a piece fetches **two** files per lead
+  (pgrb for T/q/dewpoint/pressure/wind/PRATE, bgrb for radiation) and merges
+  them. 2-D LCC lat/lon from cfgrib, windowed via `grib_idx.read_field_2d`.
+  Needs the `forecast` extra. Live-verified (Colorado 2022-01-01 00z f00–f02:
+  multi-lead, in-range T, precip ≥ 0, SW from bgrb ≥ 0).
+
 - **HRRR multi-lead forecast via GRIB2** (`hrrr:sfc_fcst`): the forecast
   product now reads the `noaa-hrrr-bdp-pds` GRIB2 `wrfsfc` archive with the
   Herbie `.idx` byte-range pattern (shared

@@ -1,8 +1,10 @@
 # CFS Provider Inventory
-# Total providers: 33 — 31 live-verified + 2 offline/access-gated.
-# Forecasts: gfs (deterministic) + gefs (ensemble, member dim) via S3 GRIB2
-# byte-range + cfgrib. gefs exposes instantaneous fields plus bucket-de-accumulated
-# precip + down shortwave/longwave radiation, and specific humidity derived from RH.
+# Total providers: 34 — 32 live-verified + 2 offline/access-gated.
+# Forecasts: gfs (deterministic, global), gefs (ensemble, member dim, global),
+# hrrr:sfc_fcst (3km CONUS), rap (13km CONUS) — all via S3 GRIB2 byte-range +
+# cfgrib (shared grib_idx helper). gefs de-buckets accumulated/averaged precip +
+# radiation and derives specific humidity from RH; gfs/hrrr/rap ship instantaneous
+# SI identity fields (PRATE flux, instantaneous radiation, direct specific humidity).
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # verified: true = live-verified against the upstream store (auth-gated ones with
@@ -785,6 +787,32 @@
     - surface_downwelling_longwave_flux   # DLWRF surface, bucket-de-averaged
     - specific_humidity     # derived from 2 m RH + T + surface pressure (Bolton 1980)
   note: "Ensemble companion to gfs (same .idx/byte-range/cfgrib machinery), pgrb2sp25 select product (3-hourly to f240), returns a member dim. Instantaneous fields identity SI; precip (APCP, accumulation) + radiation (DSWRF/DLWRF, average) ship as 6-hour buckets (0-3,0-6,6-9,...) DE-BUCKETED by lead hour (cur-prev for acc, 2*cur-prev for ave) -> APCP to flux, radiation W m-2; value-sign reset detection unsafe here. specific_humidity DERIVED from 2 m RH + T + surface pressure (RH fetched as input only, never exposed raw). LIVE-VERIFIED (precip non-negative 0-9 mm/hr, SW ~0 overnight after de-averaging, derived q 9-17 g/kg, member spread)."
+  status: implemented
+  verified: true
+
+- slug: rap
+  name: NOAA RAP atmospheric forecast (13 km, hourly, CONUS, via S3 GRIB2)
+  protocol: http
+  base_url: https://noaa-rap-pds.s3.amazonaws.com
+  resolution_deg: 0.117          # ~13 km
+  grid: lcc_2d
+  auth: anonymous
+  bbox: [-139.0, 16.0, -57.0, 58.0]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA NCEP Rapid Refresh (RAP)."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # TMP 2 m (identity, K)
+    - specific_humidity                     # SPFH 2 m (direct, no derivation)
+    - dewpoint_temperature                  # DPT 2 m
+    - surface_air_pressure                  # PRES surface
+    - eastward_wind                         # UGRD 10 m
+    - northward_wind                        # VGRD 10 m
+    - precipitation_flux                    # PRATE surface (instantaneous flux, identity)
+    - surface_downwelling_shortwave_flux    # DSWRF surface (from the bgrb file)
+    - surface_downwelling_longwave_flux     # DLWRF surface (from the bgrb file)
+  note: "Herbie-style: .idx byte-range + cfgrib (forecast extra), shared grib_idx helper. awp130 (13km LCC grid 130, CONUS). Forecast model like gfs/hrrr: most recent hourly cycle <= start supplies each valid hour (lead=valid-cycle), f00-f21 standard, f00-f51 on the 03/09/15/21Z runs. All instantaneous SI identity: PRATE is an instantaneous flux (NO de-accumulation), DSWRF/DLWRF instantaneous (NO de-averaging), SPFH direct (no derivation). Fields split across TWO files per lead: awp130pgrb (T/q/dewpoint/pressure/wind/PRATE) + awp130bgrb (radiation; absent from pgrb) — each lead fetches at most two .idx. 2-D LCC lat/lon from cfgrib, windowed via grid2d.read_field_2d. LIVE-VERIFIED (Colorado 2022-01-01 00z f00-f02: multi-lead, T in-range, precip>=0, SW from bgrb>=0)."
   status: implemented
   verified: true
 
