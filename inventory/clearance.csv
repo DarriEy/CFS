@@ -1,0 +1,37 @@
+slug,name,tier,commercial_use,redistribution,attribution_required,share_alike,license_spdx,confidence,source
+chirps,CHIRPS v2.0 daily precipitation (0.05°),A,yes,yes,false,false,CC0-1.0,high,chc.ucsb.edu/data/chirps
+chirts,"CHIRTS daily temperature (0.05°, global tropics, via HTTP)",A,yes,yes,false,false,CC0-1.0,high,chc.ucsb.edu/data/chirtsdaily
+conus404,"CONUS404 (4 km WRF reanalysis, hourly)",A,yes,yes,False,False,public-domain,high,auto-classified
+daymet,"Daymet V4R1 (1 km daily, North America, via OPeNDAP)",A,yes,yes,False,False,public-domain,high,auto-classified
+gpm,"GPM IMERG Daily precipitation (0.1°, via OPeNDAP)",A,yes,yes,False,False,public-domain,high,auto-classified
+fldas,"NASA FLDAS Noah (0.1° monthly, global/Africa land, via OPeNDAP)",A,yes,yes,False,False,public-domain,high,auto-classified
+gldas,"NASA GLDAS-2 Noah (0.25°, 3-hourly, global land)",A,yes,yes,False,False,public-domain,high,auto-classified
+merra2,"NASA MERRA-2 (0.5°×0.625°, hourly, via OPeNDAP)",A,yes,yes,False,False,public-domain,high,auto-classified
+nex_gddp,NASA NEX-GDDP-CMIP6 (0.25° daily downscaled CMIP6 projections),A,yes,yes,False,False,public-domain,high,auto-classified
+nldas,"NLDAS-2 (0.125°, hourly, via OPeNDAP)",A,yes,yes,False,False,public-domain,high,auto-classified
+aorc,"NOAA AORC v1.1 (1 km, hourly)",A,yes,yes,False,False,public-domain,high,auto-classified
+aorc_nwm,"NOAA AORC v1.1 NWM-Projected (1 km, hourly)",A,yes,yes,False,False,public-domain,high,auto-classified
+cmorph,NOAA CPC CMORPH CDR daily precipitation (0.25°),A,yes,yes,False,False,public-domain,high,auto-classified
+gefs,"NOAA GEFS ensemble forecast (0.25 select, 3-hourly, global, via S3 GRIB2)",A,yes,yes,False,False,public-domain,high,auto-classified
+gfs,"NOAA GFS atmospheric forecast (0.25°, hourly, global, via S3 GRIB2)",A,yes,yes,False,False,public-domain,high,auto-classified
+hrrr,"NOAA HRRR (3 km, hourly)",A,yes,yes,False,False,public-domain,high,auto-classified
+nam,"NOAA NAM atmospheric forecast (12 km NA + 3 km CONUS nest, via S3 GRIB2)",A,yes,yes,False,False,public-domain,high,auto-classified
+narr,NOAA NARR daily monolevel fields (32 km),A,yes,yes,False,False,public-domain,high,auto-classified
+rap,"NOAA RAP atmospheric forecast (13 km, hourly, CONUS, via S3 GRIB2)",A,yes,yes,False,False,public-domain,high,auto-classified
+nclimgrid_daily,"NOAA nClimGrid-Daily (5 km, CONUS)",A,yes,yes,False,False,public-domain,high,auto-classified
+nwm_operational,"NWM Operational Forcing (1 km, hourly, via S3)",A,yes,yes,False,False,public-domain,high,auto-classified
+persiann_cdr,"PERSIANN-CDR daily satellite precipitation (0.25°, via HTTP)",A,yes,yes,False,False,public-domain,high,auto-classified
+gridmet,gridMET daily CONUS surface meteorology (~4 km),A,yes,yes,false,false,CC0-1.0,high,climatologylab.org/gridmet
+barra2,"BoM BARRA-R2 (Australian Regional Reanalysis v2, ~12 km, hourly)",B,yes,conditional,True,False,CC-BY-4.0,high,auto-classified
+carra,"CARRA — Copernicus Arctic Regional Reanalysis (2.5 km, via CDS)",B,yes,conditional,True,False,Copernicus,high,auto-classified
+cerra,"CERRA — Copernicus European Regional Reanalysis (5.5 km, via CDS)",B,yes,conditional,True,False,Copernicus,high,auto-classified
+eobs,"E-OBS European gridded observations (0.1°/0.25° daily, via CDS)",B,yes,conditional,True,False,Copernicus,high,auto-classified
+era5_cds,"ECMWF ERA5 (0.25°, hourly, via CDS)",B,yes,conditional,True,False,Copernicus,high,auto-classified
+era5_arco,ECMWF ERA5 (ARCO / Google Cloud),B,yes,conditional,True,False,Copernicus,high,auto-classified
+era5_land,"ECMWF ERA5-Land (0.1°, hourly, via CDS)",B,yes,conditional,True,False,Copernicus,high,auto-classified
+ecmwf_opendata,"ECMWF open-data IFS HRES + AIFS + ENS forecast (0.25°, global, via AWS GRIB2)",B,yes,conditional,True,False,CC-BY-4.0,high,auto-classified
+em_earth,"EM-Earth (0.1° daily, global; AWS S3, credential-gated)",B,yes,conditional,true,false,CC-BY-4.0,high,registry.opendata.aws/emearth
+na_cordex,"NA-CORDEX (0.22°/0.44° daily, North America, via S3)",B,yes,conditional,true,false,CORDEX-terms,high,na-cordex.org/terms-use
+rdrs,"RDRS / CaSR v3.2 (Canadian Surface Reanalysis, ~10 km, hourly)",B,yes,conditional,true,false,OGL-Canada-2.0,medium,open.canada.ca
+wfde5,"WFDE5 bias-corrected ERA5 forcing (0.5°, hourly, via CDS)",B,yes,conditional,True,False,Copernicus,high,auto-classified
+mswep,"MSWEP (Multi-Source Weighted-Ensemble Precipitation, 0.1°)",C,no,conditional,True,False,non-commercial/research,medium,auto-classified
