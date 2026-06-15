@@ -10,7 +10,15 @@ import pytest
 
 xr = pytest.importorskip("xarray")
 
-from cfs.connectors.hrrr import _FIELDS, _MAPPINGS, HRRRConnector
+from cfs.connectors.hrrr import (
+    _FCST_FIELDS,
+    _FCST_MAPPINGS,
+    _FIELDS,
+    _MAPPINGS,
+    HRRRConnector,
+    _fcst_max_lead,
+    _fcst_url,
+)
 from cfs.core.exceptions import SubsetError
 from cfs.core.models import BoundingBox, TimeRange
 from cfs.core.registry import discover, list_providers
@@ -24,12 +32,27 @@ def test_registered():
 
 
 def test_all_identity_mappings():
-    # Every HRRR field is already canonical SI → identity.
+    # Every HRRR field (analysis and forecast) is already canonical SI → identity.
     assert all(m.scale == 1.0 and not m.deaccumulate for m in _MAPPINGS)
-    # PRATE is offered (precip), but only via the forecast product — the analysis
-    # product rejects a precip request (see test_precip_request_rejected).
-    canon = {f[2] for f in _FIELDS}
-    assert CanonicalVar.PRECIPITATION_FLUX in canon
+    assert all(m.scale == 1.0 and not m.deaccumulate for m in _FCST_MAPPINGS)
+    # Precipitation (PRATE) is forecast-only; the analysis stream has none.
+    assert CanonicalVar.PRECIPITATION_FLUX not in {f[2] for f in _FIELDS}
+    assert CanonicalVar.PRECIPITATION_FLUX in {f[2] for f in _FCST_FIELDS}
+
+
+def test_forecast_products_listed():
+    conn = HRRRConnector()
+    import asyncio
+    ids = {p.id for p in asyncio.run(conn.list_products())}
+    assert ids == {"hrrr:sfc_anl", "hrrr:sfc_fcst"}
+
+
+def test_fcst_url_and_lead_structure():
+    cyc = datetime(2026, 6, 15, 11)   # an off-cycle hour → short horizon
+    assert _fcst_url(cyc, 6).endswith("hrrr.20260615/conus/hrrr.t11z.wrfsfcf06.grib2")
+    assert _fcst_max_lead(11) == 18           # non-extended cycle: f00–f18
+    assert _fcst_max_lead(12) == 48           # 00/06/12/18Z: f00–f48
+    assert _fcst_max_lead(0) == 48
 
 
 async def test_precip_request_rejected():

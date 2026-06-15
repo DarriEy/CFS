@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **HRRR multi-lead forecast via GRIB2** (`hrrr:sfc_fcst`): the forecast
+  product now reads the `noaa-hrrr-bdp-pds` GRIB2 `wrfsfc` archive with the
+  Herbie `.idx` byte-range pattern (shared
+  `cfs.connectors.protocols.grib_idx`), following the same forecast model as
+  `gfs` — the most recent hourly cycle at/before the window start supplies
+  every valid hour (`lead = valid − cycle`), out to f18 (f48 on the
+  00/06/12/18Z runs). This **replaces** the previous hrrrzarr `step=1`
+  implementation, which only ever returned the +1-hour nowcast and could not
+  produce a real multi-lead forecast. All exposed fields are instantaneous SI
+  (identity): `PRATE` is an instantaneous precipitation flux (no
+  de-accumulation), `DSWRF`/`DLWRF` are instantaneous (no de-averaging, unlike
+  GFS/GEFS — live-probed), and `SPFH` is shipped directly (no humidity
+  derivation). The 2-D LCC lat/lon comes from cfgrib and is windowed with
+  `grid2d.subset_2d_grid` via the new `grib_idx.read_field_2d` helper (the
+  projected-grid sibling of `read_field`, shared with the planned RAP/NAM
+  forecast connectors). The `sfc_anl` analysis product (hrrrzarr) is
+  unchanged. Needs the `forecast` extra. Live-verified (Colorado: 2026-06-15
+  cycle 11z f00–f04 and 2022-01-01 00z f00–f02 — multi-lead, T 273–291 K,
+  q direct, SW 0–646 W m⁻², precip ≥ 0).
+
 - **EM-Earth unblocked via FRDR anonymous HTTPS** (`source: "frdr"` +
   `data_dir` staging on the `em_earth` connector). FRDR's documented stable
   per-file links (`…/repo/files/6/published/publication_542/submitted_data/

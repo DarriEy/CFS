@@ -429,7 +429,7 @@
   temporal_resolution: hourly
   license: "U.S. Government work / NOAA Open Data (public domain)"
   citation: "NOAA NCEP High-Resolution Rapid Refresh (HRRR); hrrrzarr archive."
-  products: 2                 # sfc_anl and sfc_fcst (includes precip)
+  products: 2                 # sfc_anl (hrrrzarr) + sfc_fcst (GRIB on noaa-hrrr-bdp-pds)
   canonical_variables:
     - air_temperature
     - dewpoint_temperature
@@ -440,7 +440,7 @@
     - surface_downwelling_shortwave_flux
     - surface_downwelling_longwave_flux
     - precipitation_flux                    # fcst stream only
-  note: "Added surface forecast product with precipitation support. LIVE-VERIFIED."
+  note: "TWO products from DIFFERENT sources. sfc_anl: 0-h analysis from the hrrrzarr S3 archive (per-variable zarr groups, 2-D LCC grid from the grid file); no precipitation. sfc_fcst: surface forecast from the noaa-hrrr-bdp-pds GRIB2 wrfsfc archive via Herbie .idx byte-range + cfgrib (forecast extra) — most recent hourly cycle <= start supplies each valid hour (lead=valid-cycle), to f18 (f48 on the 00/06/12/18Z runs). All fields instantaneous SI identity: PRATE is an instantaneous precip flux (NO de-accumulation), DSWRF/DLWRF instantaneous (NO de-averaging, unlike GFS/GEFS), SPFH shipped directly (no derivation). 2-D LCC lat/lon from cfgrib, windowed via grid2d. LIVE-VERIFIED: sfc_anl (Colorado, hrrrzarr); sfc_fcst (Colorado 2026-06-15 cycle 11z f00-f04 + 2022-01-01 00z f00-f02: multi-lead, T 273-291 K, q direct, SW 0-646 W/m2, precip>=0)."
   status: implemented
   verified: true
 

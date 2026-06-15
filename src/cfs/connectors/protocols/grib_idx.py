@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, cast
 from cfs.core.config import get_settings
 from cfs.core.exceptions import SubsetError
 from cfs.subset.bbox import apply_bbox_subset, plan_bbox_subset
+from cfs.subset.grid2d import subset_2d_grid
 
 if TYPE_CHECKING:
     import xarray as xr
@@ -143,6 +144,34 @@ def read_field(
     # apply_bbox_subset is typed Any (xarray's stubs are incomplete); the subset of
     # a single-variable Dataset is still a Dataset.
     return cast("xr.Dataset", apply_bbox_subset(ds, plan, lat_name=_LAT, lon_name=_LON))
+
+
+def read_field_2d(
+    url: str,
+    idx: list[tuple[str, str, int]],
+    grib_var: str,
+    grib_level: str,
+    internal: str,
+    bbox: BoundingBox,
+    *,
+    label: str = "GRIB",
+    buffer: int = 2,
+) -> xr.Dataset | None:
+    """Like :func:`read_field` but for **projected 2-D grids** (LCC HRRR/RAP/NAM).
+
+    cfgrib attaches 2-D ``latitude``/``longitude`` over the native ``y``/``x``
+    dims, so the bbox is applied as an index window on those dims
+    (:func:`cfs.subset.grid2d.subset_2d_grid`) rather than by 1-D coordinate
+    slicing. Returns ``None`` when the message is absent from the ``.idx``.
+    """
+    rng = byte_range(idx, grib_var, grib_level)
+    if rng is None:
+        return None
+    ds = open_message(http_range(url, rng[0], rng[1]), internal, label=label)
+    return cast(
+        "xr.Dataset",
+        subset_2d_grid(ds, bbox, lat_name=_LAT, lon_name=_LON, buffer=buffer),
+    )
 
 
 def debucket(cur: xr.Dataset, prev: xr.Dataset, kind: str) -> xr.Dataset:
