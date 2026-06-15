@@ -12,11 +12,10 @@ xr = pytest.importorskip("xarray")
 from cfs.connectors.gfs import (
     _MAPPINGS,
     _VARS,
-    _cycle_for,
     _file_url,
     _lead_available,
-    _parse_idx,
 )
+from cfs.connectors.protocols.grib_idx import cycle_for, parse_idx
 from cfs.core.registry import discover, get_connector, list_providers
 from cfs.core.vocabulary import CanonicalVar
 
@@ -35,9 +34,9 @@ async def test_one_forecast_product():
 
 def test_cycle_floors_to_6h():
     # Most recent 00/06/12/18 UTC cycle at or before the start.
-    assert _cycle_for(datetime(2026, 6, 1, 1, 30)) == datetime(2026, 6, 1, 0)
-    assert _cycle_for(datetime(2026, 6, 1, 7)) == datetime(2026, 6, 1, 6)
-    assert _cycle_for(datetime(2026, 6, 1, 23)) == datetime(2026, 6, 1, 18)
+    assert cycle_for(datetime(2026, 6, 1, 1, 30)) == datetime(2026, 6, 1, 0)
+    assert cycle_for(datetime(2026, 6, 1, 7)) == datetime(2026, 6, 1, 6)
+    assert cycle_for(datetime(2026, 6, 1, 23)) == datetime(2026, 6, 1, 18)
 
 
 def test_lead_availability():
@@ -59,7 +58,7 @@ def test_parse_idx_byte_ranges():
         "581:415724904:d=2026060100:SPFH:2 m above ground:anl:\n"
         "589:421301786:d=2026060100:PRATE:surface:anl:\n"
     )
-    recs = _parse_idx(idx)
+    recs = parse_idx(idx)
     assert recs[0] == ("TMP", "2 m above ground", 415216076)
     assert recs[1] == ("SPFH", "2 m above ground", 415724904)
     # the connector computes a message's end as (next start - 1)

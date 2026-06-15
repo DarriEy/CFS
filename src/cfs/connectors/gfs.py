@@ -32,10 +32,7 @@ this connector is live-verifiable.
 
 from __future__ import annotations
 
-import os
-import tempfile
 import time
-import urllib.request
 from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING
@@ -43,6 +40,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from cfs.connectors.base import BaseForcingConnector
+from cfs.connectors.protocols.grib_idx import cycle_for, http_range, parse_idx, read_field
 from cfs.core.config import get_settings
 from cfs.core.exceptions import MissingExtraError, SubsetError
 from cfs.core.models import (
@@ -57,7 +55,6 @@ from cfs.core.models import (
 )
 from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
-from cfs.subset.bbox import apply_bbox_subset, plan_bbox_subset
 from cfs.subset.canonical import VariableMapping, harmonize
 
 if TYPE_CHECKING:
@@ -100,11 +97,6 @@ _MAX_HOURLY_LEAD = 120
 _MAX_LEAD = 384
 
 
-def _cycle_for(start: datetime) -> datetime:
-    """Most recent 00/06/12/18 UTC cycle at or before ``start``."""
-    return start.replace(hour=(start.hour // 6) * 6, minute=0, second=0, microsecond=0)
-
-
 def _lead_available(lead: int) -> bool:
     if lead < 0 or lead > _MAX_LEAD:
         return False
@@ -115,19 +107,6 @@ def _file_url(cycle: datetime, lead: int) -> str:
     d = cycle.strftime("%Y%m%d")
     h = cycle.strftime("%H")
     return f"{S3_BASE}/gfs.{d}/{h}/atmos/gfs.t{h}z.pgrb2.0p25.f{lead:03d}"
-
-
-def _parse_idx(text: str) -> list[tuple[str, str, int]]:
-    """Parse a GFS .idx into [(grib_var, grib_level, start_byte)] in file order."""
-    out: list[tuple[str, str, int]] = []
-    for line in text.splitlines():
-        if not line:
-            continue
-        parts = line.split(":")
-        # msgnum : start_byte : date : VAR : level : forecast : ...
-        if len(parts) >= 5:
-            out.append((parts[3], parts[4], int(parts[1])))
-    return out
 
 
 @register("gfs")
@@ -173,34 +152,6 @@ class GFSConnector(BaseForcingConnector):
                 "pip install -e '.[forecast]' (cfgrib + eccodes)"
             ) from e
 
-    @staticmethod
-    def _http_range(url: str, start: int, end: int | str) -> bytes:
-        rng = f"bytes={start}-{end}"
-        req = urllib.request.Request(url, headers={"Range": rng})  # noqa: S310 - https S3
-        with urllib.request.urlopen(req, timeout=get_settings().provider_timeout_s) as r:
-            data: bytes = r.read()
-        return data
-
-    def _open_message(self, raw: bytes, internal: str):
-        """Decode one GRIB message (bytes) with cfgrib → a single-variable Dataset."""
-        import xarray as xr
-
-        fd, path = tempfile.mkstemp(suffix=".grib2")
-        try:
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(raw)
-            ds = xr.open_dataset(path, engine="cfgrib", backend_kwargs={"indexpath": ""})
-            ds = ds.load()
-        finally:
-            os.unlink(path)
-        data_vars = list(ds.data_vars)
-        if not data_vars:
-            raise SubsetError(f"GFS message for {internal} decoded no variable")
-        ds = ds[[data_vars[0]]].rename({data_vars[0]: internal})
-        # Drop GRIB scalar coords (step/valid_time/heightAboveGround/surface/number…)
-        drop = [c for c in ds.coords if c not in ("latitude", "longitude")]
-        return ds.drop_vars(drop, errors="ignore")
-
     async def fetch(
         self,
         product_id: str,
@@ -222,7 +173,7 @@ class GFSConnector(BaseForcingConnector):
         if not selected:
             raise SubsetError("None of the requested variables are offered by GFS")
 
-        cycle = _cycle_for(time_range.start)
+        cycle = cycle_for(time_range.start)
         valid_times = pd.date_range(time_range.start, time_range.end, freq="h")
         warnings: list[str] = []
 
@@ -235,20 +186,13 @@ class GFSConnector(BaseForcingConnector):
                 )
                 return None
             url = _file_url(cycle, lead)
-            idx_recs = _parse_idx(self._http_range(url + ".idx", 0, "").decode())
-            per_var = []
-            for v in selected:
-                rng = None
-                for i, (gv, gl, sb) in enumerate(idx_recs):
-                    if gv == v.grib_var and gl == v.grib_level:
-                        end = idx_recs[i + 1][2] - 1 if i + 1 < len(idx_recs) else ""
-                        rng = (sb, end)
-                        break
-                if rng is None:  # e.g. radiation/precip at f000 (analysis)
-                    continue
-                ds = self._open_message(self._http_range(url, rng[0], rng[1]), v.internal)
-                plan = plan_bbox_subset(ds, bbox, lat_name="latitude", lon_name="longitude")
-                per_var.append(apply_bbox_subset(ds, plan, lat_name="latitude", lon_name="longitude"))
+            idx_recs = parse_idx(http_range(url + ".idx", 0, "").decode())
+            # radiation/precip are absent at f000 (analysis): read_field → None, skipped.
+            per_var = [
+                f for v in selected
+                if (f := read_field(url, idx_recs, v.grib_var, v.grib_level, v.internal, bbox, label="GFS"))
+                is not None
+            ]
             if not per_var:
                 return None
             merged = xr.merge(per_var, join="inner")

@@ -43,17 +43,20 @@ byte-range requests — restrict the member list for quick fetches. Needs the
 
 from __future__ import annotations
 
-import os
-import tempfile
 import time
-import urllib.request
 from functools import partial
 from typing import TYPE_CHECKING
 
 import structlog
 
 from cfs.connectors.base import BaseForcingConnector
-from cfs.connectors.gfs import _cycle_for, _parse_idx
+from cfs.connectors.protocols.grib_idx import (
+    cycle_for,
+    debucket,
+    http_range,
+    parse_idx,
+    read_field,
+)
 from cfs.core.config import get_settings
 from cfs.core.exceptions import MissingExtraError, SubsetError
 from cfs.core.models import (
@@ -69,7 +72,6 @@ from cfs.core.models import (
 from cfs.core.registry import register
 from cfs.core.vocabulary import CanonicalVar
 from cfs.derive.humidity import specific_humidity_from_rh
-from cfs.subset.bbox import apply_bbox_subset, plan_bbox_subset
 from cfs.subset.canonical import VariableMapping, harmonize
 
 if TYPE_CHECKING:
@@ -136,50 +138,6 @@ def _file_url(member: str, cycle, lead: int) -> str:
     d = cycle.strftime("%Y%m%d")
     h = cycle.strftime("%H")
     return f"{S3_BASE}/gefs.{d}/{h}/atmos/pgrb2sp25/{member}.t{h}z.pgrb2s.0p25.f{lead:03d}"
-
-
-def _http_range(url: str, start: int, end: int | str) -> bytes:
-    req = urllib.request.Request(url, headers={"Range": f"bytes={start}-{end}"})  # noqa: S310 - https S3
-    with urllib.request.urlopen(req, timeout=get_settings().provider_timeout_s) as r:
-        data: bytes = r.read()
-    return data
-
-
-def _open_message(raw: bytes, internal: str):
-    """Decode one GRIB message (bytes) with cfgrib → single-variable Dataset."""
-    import xarray as xr
-
-    fd, path = tempfile.mkstemp(suffix=".grib2")
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(raw)
-        ds = xr.open_dataset(path, engine="cfgrib", backend_kwargs={"indexpath": ""}).load()
-    finally:
-        os.unlink(path)
-    data_vars = list(ds.data_vars)
-    if not data_vars:
-        raise SubsetError(f"GEFS message for {internal} decoded no variable")
-    ds = ds[[data_vars[0]]].rename({data_vars[0]: internal})
-    drop = [c for c in ds.coords if c not in ("latitude", "longitude")]
-    return ds.drop_vars(drop, errors="ignore")
-
-
-def _byte_range(idx, grib_var: str, grib_level: str):
-    """Locate (start, end) byte range of one (var, level) message in a parsed idx."""
-    for i, (v, lv, sb) in enumerate(idx):
-        if v == grib_var and lv == grib_level:
-            return sb, (idx[i + 1][2] - 1 if i + 1 < len(idx) else "")
-    return None
-
-
-def _read_field(url: str, idx, grib_var: str, grib_level: str, internal: str, bbox):
-    """Byte-range fetch + decode + bbox-subset one (var, level) field, or None."""
-    rng = _byte_range(idx, grib_var, grib_level)
-    if rng is None:
-        return None
-    ds = _open_message(_http_range(url, rng[0], rng[1]), internal)
-    plan = plan_bbox_subset(ds, bbox, lat_name="latitude", lon_name="longitude")
-    return apply_bbox_subset(ds, plan, lat_name="latitude", lon_name="longitude")
 
 
 @register("gefs")
@@ -269,7 +227,7 @@ class GEFSConnector(BaseForcingConnector):
         if not self.members:
             raise SubsetError("GEFS member list is empty")
 
-        cycle = _cycle_for(time_range.start)
+        cycle = cycle_for(time_range.start)
         # GEFS-select is 3-hourly; snap the start down to a 3h boundary off the cycle.
         valid_times = pd.date_range(time_range.start, time_range.end, freq="3h")
         warnings: list[str] = []
@@ -279,10 +237,10 @@ class GEFSConnector(BaseForcingConnector):
             if not _lead_available(lead):
                 return None
             url = _file_url(member, cycle, lead)
-            idx = _parse_idx(_http_range(url + ".idx", 0, "").decode())
+            idx = parse_idx(http_range(url + ".idx", 0, "").decode())
             per_var = [
                 f for gv, gl, internal in inst_specs
-                if (f := _read_field(url, idx, gv, gl, internal, bbox)) is not None
+                if (f := read_field(url, idx, gv, gl, internal, bbox, label="GEFS")) is not None
             ]
             # Precip/radiation are bucket quantities (none at f000): de-bucket the
             # per-interval value, fetching the bucket's first-half field when the
@@ -292,16 +250,16 @@ class GEFSConnector(BaseForcingConnector):
                 idx_prev = url_prev = None
                 if second_half:
                     url_prev = _file_url(member, cycle, lead - 3)
-                    idx_prev = _parse_idx(_http_range(url_prev + ".idx", 0, "").decode())
+                    idx_prev = parse_idx(http_range(url_prev + ".idx", 0, "").decode())
                 for gv, gl, _c, internal, kind in selected_flux:
-                    cur = _read_field(url, idx, gv, gl, internal, bbox)
+                    cur = read_field(url, idx, gv, gl, internal, bbox, label="GEFS")
                     if cur is None:
                         continue
                     if url_prev is not None and idx_prev is not None:
-                        prev = _read_field(url_prev, idx_prev, gv, gl, internal, bbox)
+                        prev = read_field(url_prev, idx_prev, gv, gl, internal, bbox, label="GEFS")
                         if prev is None:
                             continue  # cannot de-bucket without the first half
-                        cur = cur - prev if kind == "acc" else 2 * cur - prev
+                        cur = debucket(cur, prev, kind)
                     per_var.append(cur.clip(min=0))
             if not per_var:
                 return None
