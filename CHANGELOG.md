@@ -129,6 +129,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Shared GRIB byte-range helper** (`cfs.connectors.protocols.grib_idx`): the
+  Herbie-pattern machinery (`.idx` parse, byte-range fetch, single-message cfgrib
+  decode, `(var, level)`→byte-range lookup, cycle flooring, bucket
+  de-accumulation) was duplicated across `gfs`/`gefs`; it is now one module and
+  both are refactored onto it (~127 lines of duplication removed,
+  behaviour-preserving — gfs/gefs live parity intact). The module grew to carry
+  the helpers the new forecast connectors share: projected-2-D-grid reads
+  (`read_field_2d`/`read_message_2d`), forecast-window-aware `.idx` records
+  (`parse_idx_records`, for NAM's run-total APCP selection), and the ECMWF JSON
+  `.index` parser + regular-grid `read_message`.
+
 - **EM-Earth precip units VERIFIED, warning retired**: the FRDR file attrs
   read `prcp: mm day-1` and `tmean`/`tdew: Celsius` — exactly the
   connector's long-standing assumption (`/86400`, `+273.15`). The per-fetch
@@ -161,8 +172,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     windowing no-ops (the hrrrzarr variable groups carry no latitude
     coordinate to mask on), so the native handler downloads the **full CONUS
     grid** (~1.3 GB/day, 42 min for the 1-day experiment) where the community
-    fetch windows to the bbox (96 s). CONUS-only; legacy `HRRR_VARS` key
-    translated.
+    fetch windows to the bbox (96 s) — since repaired upstream in SYMFLUENCE
+    PR #226 (LCC-grid windowing before chunk fetch). CONUS-only; legacy
+    `HRRR_VARS` key translated.
   - `DAYMET` → `daymet:daily_v4` (exp16: `bit-identical` — **full-grid**:
     all four canonical derivations (`T=(tmax+tmin)/2+273.15`, `prcp/86400`,
     `srad·dayl/86400`, inverse-Bolton dewpoint) recomputed in float32 from the
@@ -178,8 +190,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     corroboration. Native-side findings (the parity verdict uses an independent
     raw route, not the native gridded path): the native gridded OPeNDAP route
     slices the descending Daymet y axis with an ascending slice and returns
-    empty subsets (a repair exists on `fix/native-acquisition-bugs`, not yet
-    merged to develop), and there is no THREDDS-NCSS alternative in the handler.
+    empty subsets (repaired upstream in SYMFLUENCE PR #226, now merged to
+    develop and main), and there is no THREDDS-NCSS alternative in the handler.
     Daily 1 km LCC, North-America-only; legacy `DAYMET_VARIABLES` key
     translated.
 - **Spatial domains on capabilities** (`DatasetSpec.spatial`, minimal honest
