@@ -22,9 +22,10 @@ so importing this module never requires it.
 
 .. note::
    ECMWF open-data uses a *different* index format (a ``.index`` sidecar with
-   one JSON object per message, not this colon-delimited ``.idx``). Only the
-   byte-range fetch and the cfgrib decode are reusable there; its index parser
-   belongs in a sibling helper.
+   one JSON object per message, not this colon-delimited ``.idx``), handled by
+   :func:`parse_ecmwf_index`; the byte-range fetch (:func:`http_range`), decode
+   (:func:`open_message`), and regular-grid window (:func:`read_message`) are
+   shared.
 """
 
 from __future__ import annotations
@@ -139,7 +140,26 @@ def read_field(
     rng = byte_range(idx, grib_var, grib_level)
     if rng is None:
         return None
-    ds = open_message(http_range(url, rng[0], rng[1]), internal, label=label)
+    return read_message(url, rng[0], rng[1], internal, bbox, label=label)
+
+
+def read_message(
+    url: str,
+    start: int,
+    end: int | str,
+    internal: str,
+    bbox: BoundingBox,
+    *,
+    label: str = "GRIB",
+) -> xr.Dataset:
+    """Byte-range fetch + decode + regular-grid bbox-subset one message at ``[start, end]``.
+
+    The decode/window half of :func:`read_field`, split out so a caller that
+    selected a message by something other than ``(var, level)`` — e.g. an ECMWF
+    ``.index`` ``_offset``/``_length`` — can reuse it. Regular 1-D lat/lon grid
+    (0–360 longitude is normalized by :func:`cfs.subset.bbox.plan_bbox_subset`).
+    """
+    ds = open_message(http_range(url, start, end), internal, label=label)
     plan = plan_bbox_subset(ds, bbox, lat_name=_LAT, lon_name=_LON)
     # apply_bbox_subset is typed Any (xarray's stubs are incomplete); the subset of
     # a single-variable Dataset is still a Dataset.
@@ -213,6 +233,29 @@ def parse_idx_records(text: str) -> list[tuple[str, str, int, int | str, str]]:
     for i, (v, lv, sb, fc) in enumerate(rows):
         end: int | str = rows[i + 1][2] - 1 if i + 1 < len(rows) else ""
         out.append((v, lv, sb, end, fc))
+    return out
+
+
+def parse_ecmwf_index(text: str) -> list[tuple[str, str, str, int, int]]:
+    """Parse an ECMWF open-data ``.index`` into ``(param, levtype, step, offset, length)``.
+
+    ECMWF's sidecar is one JSON object per line (not the NOAA colon ``.idx``),
+    and gives each message's byte range **directly** via ``_offset``/``_length``
+    — so there is no next-start-minus-one arithmetic. Each file holds a single
+    forecast step, so ``(param, levtype)`` is unique within one index.
+    """
+    import json
+
+    out: list[tuple[str, str, str, int, int]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        r = json.loads(line)
+        out.append(
+            (r.get("param"), r.get("levtype"), str(r.get("step")),
+             int(r["_offset"]), int(r["_length"])),
+        )
     return out
 
 

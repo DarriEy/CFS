@@ -67,6 +67,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cycle 11z f00–f04 and 2022-01-01 00z f00–f02 — multi-lead, T 273–291 K,
   q direct, SW 0–646 W m⁻², precip ≥ 0).
 
+- **ECMWF open-data forecast connector** (`ecmwf_opendata:ifs_0p25` and
+  `:aifs_0p25`): the major free **global** forecast outside NOAA — ECMWF IFS
+  HRES physics (`oper`) and the **AIFS** machine-learning model
+  (`aifs-single`), both 0.25°, read from the `ecmwf-forecasts` AWS Open Data
+  mirror with byte-range GRIB2. ECMWF
+  ships a **JSON `.index`** sidecar (one object per message, byte range given
+  directly via `_offset`/`_length`, and the suffix *replaces* `.grib2` rather
+  than appending like NOAA's `.idx`) — handled by the new
+  `grib_idx.parse_ecmwf_index`; the byte-range fetch, cfgrib decode, and the new
+  regular-grid `grib_idx.read_message` are shared. Forecast model like `gfs`:
+  most recent 00/06/12/18Z cycle ≤ start. IFS goes to 360 h for 00/12Z and 90 h
+  for 06/18Z (3-hourly to 144 h then 6-hourly); AIFS is 6-hourly to 360 h for
+  all cycles. Variables match `era5_arco` — `2t`→
+  air_temperature, `2d`→dewpoint_temperature, `10u`/`10v`→winds, `sp`→
+  surface_air_pressure — plus the **accumulated** `tp`/`ssrd`/`strd`, which
+  ECMWF accumulates from step 0 with no within-run reset, so they are
+  de-accumulated against the previous step (`tp` m→kg m⁻² ×1000 ÷ interval →
+  flux; `ssrd`/`strd` J m⁻² ÷ interval → W m⁻²; absent at step 0). **Radiation
+  is confirmed present in the free set** (resolves the spec's open question).
+  0–360 grid longitudes are normalized to the signed bbox. CC-BY-4.0
+  (attribution), unlike the NOAA public-domain sources. Needs the `forecast`
+  extra. The ENS (`enfo`, member dim) stream is a follow-up. Live-verified
+  (Colorado, 2026-06-15 00z): IFS steps 3/6/9 (lon normalized, T 277–287 K,
+  Td ≤ T, de-accumulated precip ≥ 0 and SW ramp 0→129 W m⁻²); AIFS steps
+  6/12/18 (multi-lead, in-range T, precip ≥ 0).
+
 - **EM-Earth unblocked via FRDR anonymous HTTPS** (`source: "frdr"` +
   `data_dir` staging on the `em_earth` connector). FRDR's documented stable
   per-file links (`…/repo/files/6/published/publication_542/submitted_data/

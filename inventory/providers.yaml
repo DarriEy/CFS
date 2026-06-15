@@ -1,11 +1,11 @@
 # CFS Provider Inventory
-# Total providers: 35 — 33 live-verified + 2 offline/access-gated.
-# Forecasts: gfs (deterministic, global), gefs (ensemble, member dim, global),
-# hrrr:sfc_fcst (3km CONUS), rap (13km CONUS), nam (12km North America) — all via
-# S3 GRIB2 byte-range + cfgrib (shared grib_idx helper). gefs de-buckets
-# accumulated/averaged precip + radiation and derives specific humidity from RH;
-# nam de-accumulates APCP (12h-reset-aware) for precip; gfs/hrrr/rap ship
-# instantaneous SI identity fields (PRATE flux, instantaneous radiation, direct q).
+# Total providers: 36 — 34 live-verified + 2 offline/access-gated.
+# Forecasts: gfs + gefs (NOAA global), hrrr:sfc_fcst (3km CONUS), rap (13km CONUS),
+# nam (12km North America), ecmwf_opendata (ECMWF IFS HRES + AIFS, global) — all
+# via GRIB2 byte-range + cfgrib (shared grib_idx helper). gefs de-buckets
+# accumulated/averaged precip + radiation and derives q from RH; nam de-accumulates
+# APCP (12h-reset-aware); ecmwf_opendata de-accumulates tp/ssrd/strd (JSON .index,
+# byte range direct); gfs/hrrr/rap ship instantaneous SI identity fields.
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # verified: true = live-verified against the upstream store (auth-gated ones with
@@ -840,6 +840,28 @@
     - surface_downwelling_longwave_flux     # DLWRF surface (instantaneous)
     - precipitation_flux                    # APCP de-accumulated (12h-reset-aware)
   note: "Herbie-style: .idx byte-range + cfgrib (forecast extra), shared grib_idx helper. awphys (12km LCC grid 218, North America). Forecast model: most recent 00/06/12/18Z cycle <= start supplies each valid hour; leads HOURLY to f36, then 3-HOURLY to f84 (no f00 forcing). Instantaneous fields identity SI (incl. DSWRF/DLWRF instantaneous, SPFH direct). PRECIP is the awkward one: no PRATE, only APCP accumulation whose reference RESETS every 12h (ref=12*floor((N-1)/12)) with duplicate per-lead messages, so the connector selects the run-total APCP by its forecast-window string and de-accumulates per step (inc=runtotal at a reset boundary, else runtotal(N)-runtotal(N-step)), /(step*3600) -> flux. Only the 12km awphys product; 3km conusnest is a follow-up. LIVE-VERIFIED (2026-06-13 12z: multi-lead T/SW/precip; precip de-accum closed-loop EXACT vs NAM's own 3-6h bucket and 12-13h boundary run-total)."
+- slug: ecmwf_opendata
+  name: ECMWF open-data IFS HRES + AIFS forecast (0.25°, global, via AWS GRIB2)
+  protocol: http
+  base_url: https://ecmwf-forecasts.s3.amazonaws.com
+  resolution_deg: 0.25
+  grid: regular            # 0-360 longitude, normalized on subset
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: 3hourly
+  license: "ECMWF open data (CC-BY-4.0; attribution required)"
+  citation: "ECMWF Integrated Forecasting System (IFS) / AIFS open data."
+  products: 2                  # ifs_0p25 (HRES physics) + aifs_0p25 (ML model)
+  canonical_variables:
+    - air_temperature                       # 2t (identity, K)
+    - dewpoint_temperature                  # 2d (identity, K)
+    - eastward_wind                         # 10u
+    - northward_wind                        # 10v
+    - surface_air_pressure                  # sp
+    - precipitation_flux                    # tp (m, accumulated) de-accumulated -> kg m-2 s-1
+    - surface_downwelling_shortwave_flux    # ssrd (J m-2, accumulated) de-accumulated -> W m-2
+    - surface_downwelling_longwave_flux     # strd (J m-2, accumulated) de-accumulated -> W m-2
+  note: "The major free GLOBAL forecast outside NOAA. TWO products, both 0.25deg from the ecmwf-forecasts AWS Open Data mirror (data.ecmwf.int uses a different, sometimes TLS-intercepted host): ifs_0p25 (HRES physics, oper) and aifs_0p25 (ECMWF's ML model, aifs-single). ECMWF ships a JSON .index sidecar (one object/message with _offset/_length, byte range direct) that REPLACES the .grib2 suffix — parsed by grib_idx.parse_ecmwf_index; byte-range fetch + cfgrib decode + regular-grid window shared. Forecast model like gfs: most recent 00/06/12/18Z cycle <= start. IFS: 00/12Z to 360h, 06/18Z to 90h, 3-hourly to 144h then 6-hourly. AIFS: 6-hourly to 360h, all cycles. Same fields both: 2t/2d/10u/10v/sp identity SI (dewpoint emitted directly, matching era5_arco); tp/ssrd/strd ACCUMULATE from step 0 (no within-run reset) -> de-accumulated against the previous step (tp m->kg m-2 *1000 /interval -> flux; ssrd/strd J m-2 /interval -> W m-2; absent at step 0). RADIATION CONFIRMED present in the free set (both models). ENS (enfo, member dim) is a follow-up. LIVE-VERIFIED (Colorado, yesterday/2026-06-15 00z): IFS steps 3/6/9 (lon normalized, T 277-287 K, Td<=T, de-accum precip>=0 + SW ramp 0-129); AIFS steps 6/12/18 (multi-lead, in-range T, precip>=0)."
   status: implemented
   verified: true
 
