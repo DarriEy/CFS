@@ -29,7 +29,7 @@ from cfs.core.models import BoundingBox, FetchResult, TimeRange
 from cfs.core.registry import discover, get_connector, list_providers
 from cfs.core.vocabulary import CanonicalVar
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "BoundingBox",

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-06-15
+
+### Fixed
+
+- **Combined U/V wind GRIB messages broke RAP & NAM winds** (`grib_idx`): RAP
+  (`awp130`) and NAM (`awphys`) pack 10 m U and V wind into a **single GRIB2
+  message**, so both `.idx` entries share one byte offset. The byte-range-per-
+  field model computed the first component's end as `next_entry.start − 1` —
+  i.e. `start − 1` for a co-located entry — yielding an invalid range and a
+  cfgrib decode failure; the second entry silently read the combined message and
+  took the wrong component. So `eastward_wind`/`northward_wind` from
+  `rap:awp130_fcst` and `nam:awphys_fcst` were broken in 0.4.0 (the gap was
+  hidden because no forecast network test requested winds). Fix: `byte_range`
+  and `parse_idx_records` now end a message at the next **strictly greater**
+  start (skipping co-located entries → the full combined-message extent), and
+  `open_message` takes a `prefer` argument to select the requested component
+  (`u10`/`v10`) from a multi-variable decode. GFS/GEFS/HRRR/ECMWF have separate
+  U/V messages and are unaffected. Live-verified: NAM `eastward_wind == u10` and
+  `northward_wind == v10` (not swapped) vs a direct decode; RAP/NAM/conusnest
+  winds distinct and in range; HRRR (separate messages) unchanged. Every GRIB
+  forecast connector's network test now requests winds (regression guard), plus
+  hermetic `grib_idx` unit tests for the shared-offset case.
+
+### Added
+
+- **NAM 3 km CONUS nest** (`nam:conusnest_fcst`): the high-resolution NAM nest
+  (`conusnest.hires`), hourly to f60. Unlike the 12 km `awphys`, the nest ships
+  an **instantaneous `PRATE`** flux and instantaneous `DSWRF`/`DLWRF`, so it is
+  an all-instantaneous identity-SI product (no APCP de-accumulation); the
+  instantaneous messages are pinned by their `"{lead} hour fcst"` window since
+  the nest also publishes ave/max variants. Live-verified (Florida, multi-lead:
+  winds, instantaneous precip, radiation). (NWM `long_range` was investigated and
+  dropped — `noaa-nwm-pds` has no `forcing_long_range` product; the long-range
+  model is driven by medium-range forcing. NBM stays deferred.)
+
 ## [0.4.0] — 2026-06-15
 
 ### Added
