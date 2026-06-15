@@ -136,7 +136,7 @@ def test_facade_names_are_the_real_objects():
 
 
 def test_version():
-    assert cfs.__version__ == "0.3.0"
+    assert cfs.__version__ == "0.4.0"
 
 
 def test_importing_cfs_does_not_import_connectors():
