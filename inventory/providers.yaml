@@ -800,8 +800,8 @@
   bbox: [-180.0, -90.0, 180.0, 90.0]
   temporal_resolution: 3hourly
   license: "ECMWF open data (CC-BY-4.0; attribution required)"
-  citation: "ECMWF Integrated Forecasting System (IFS) open data."
-  products: 1
+  citation: "ECMWF Integrated Forecasting System (IFS) / AIFS open data."
+  products: 2                  # ifs_0p25 (HRES physics) + aifs_0p25 (ML model)
   canonical_variables:
     - air_temperature                       # 2t (identity, K)
     - dewpoint_temperature                  # 2d (identity, K)
@@ -811,7 +811,7 @@
     - precipitation_flux                    # tp (m, accumulated) de-accumulated -> kg m-2 s-1
     - surface_downwelling_shortwave_flux    # ssrd (J m-2, accumulated) de-accumulated -> W m-2
     - surface_downwelling_longwave_flux     # strd (J m-2, accumulated) de-accumulated -> W m-2
-  note: "The major free GLOBAL forecast outside NOAA. IFS HRES (oper) 0.25deg, read from the ecmwf-forecasts AWS Open Data mirror (data.ecmwf.int uses a different, sometimes TLS-intercepted host). ECMWF ships a JSON .index sidecar (one object/message with _offset/_length, byte range direct) that REPLACES the .grib2 suffix — parsed by grib_idx.parse_ecmwf_index; byte-range fetch + cfgrib decode + regular-grid window shared. Forecast model like gfs: most recent 00/06/12/18Z cycle <= start; 00/12Z to 360h, 06/18Z to 90h; 3-hourly to 144h then 6-hourly. 2t/2d/10u/10v/sp identity SI (dewpoint emitted directly, matching era5_arco). tp/ssrd/strd ACCUMULATE from step 0 (no within-run reset) -> de-accumulated against the previous step: tp m->kg m-2 (*1000) /interval -> flux; ssrd/strd J m-2 /interval -> W m-2; absent at step 0. RADIATION CONFIRMED present in the free set (resolves the spec's open question). AIFS (aifs-single) + ENS (enfo, member dim) are follow-ups. LIVE-VERIFIED (Colorado 2026-06-15 00z steps 3/6/9: lon normalized, T 277-287 K, Td<=T, de-accum precip>=0 + SW ramp 0-129)."
+  note: "The major free GLOBAL forecast outside NOAA. TWO products, both 0.25deg from the ecmwf-forecasts AWS Open Data mirror (data.ecmwf.int uses a different, sometimes TLS-intercepted host): ifs_0p25 (HRES physics, oper) and aifs_0p25 (ECMWF's ML model, aifs-single). ECMWF ships a JSON .index sidecar (one object/message with _offset/_length, byte range direct) that REPLACES the .grib2 suffix — parsed by grib_idx.parse_ecmwf_index; byte-range fetch + cfgrib decode + regular-grid window shared. Forecast model like gfs: most recent 00/06/12/18Z cycle <= start. IFS: 00/12Z to 360h, 06/18Z to 90h, 3-hourly to 144h then 6-hourly. AIFS: 6-hourly to 360h, all cycles. Same fields both: 2t/2d/10u/10v/sp identity SI (dewpoint emitted directly, matching era5_arco); tp/ssrd/strd ACCUMULATE from step 0 (no within-run reset) -> de-accumulated against the previous step (tp m->kg m-2 *1000 /interval -> flux; ssrd/strd J m-2 /interval -> W m-2; absent at step 0). RADIATION CONFIRMED present in the free set (both models). ENS (enfo, member dim) is a follow-up. LIVE-VERIFIED (Colorado, yesterday/2026-06-15 00z): IFS steps 3/6/9 (lon normalized, T 277-287 K, Td<=T, de-accum precip>=0 + SW ramp 0-129); AIFS steps 6/12/18 (multi-lead, in-range T, precip>=0)."
   status: implemented
   verified: true
 

@@ -9,16 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **ECMWF open-data forecast connector** (`ecmwf_opendata:ifs_0p25`): the major
-  free **global** forecast outside NOAA — ECMWF IFS HRES (`oper`), 0.25°, read
-  from the `ecmwf-forecasts` AWS Open Data mirror with byte-range GRIB2. ECMWF
+- **ECMWF open-data forecast connector** (`ecmwf_opendata:ifs_0p25` and
+  `:aifs_0p25`): the major free **global** forecast outside NOAA — ECMWF IFS
+  HRES physics (`oper`) and the **AIFS** machine-learning model
+  (`aifs-single`), both 0.25°, read from the `ecmwf-forecasts` AWS Open Data
+  mirror with byte-range GRIB2. ECMWF
   ships a **JSON `.index`** sidecar (one object per message, byte range given
   directly via `_offset`/`_length`, and the suffix *replaces* `.grib2` rather
   than appending like NOAA's `.idx`) — handled by the new
   `grib_idx.parse_ecmwf_index`; the byte-range fetch, cfgrib decode, and the new
   regular-grid `grib_idx.read_message` are shared. Forecast model like `gfs`:
-  most recent 00/06/12/18Z cycle ≤ start (00/12Z to 360 h, 06/18Z to 90 h;
-  3-hourly to 144 h then 6-hourly). Variables match `era5_arco` — `2t`→
+  most recent 00/06/12/18Z cycle ≤ start. IFS goes to 360 h for 00/12Z and 90 h
+  for 06/18Z (3-hourly to 144 h then 6-hourly); AIFS is 6-hourly to 360 h for
+  all cycles. Variables match `era5_arco` — `2t`→
   air_temperature, `2d`→dewpoint_temperature, `10u`/`10v`→winds, `sp`→
   surface_air_pressure — plus the **accumulated** `tp`/`ssrd`/`strd`, which
   ECMWF accumulates from step 0 with no within-run reset, so they are
@@ -27,10 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is confirmed present in the free set** (resolves the spec's open question).
   0–360 grid longitudes are normalized to the signed bbox. CC-BY-4.0
   (attribution), unlike the NOAA public-domain sources. Needs the `forecast`
-  extra. AIFS (`aifs-single`) and the ENS (`enfo`, member dim) stream are
-  follow-ups. Live-verified (Colorado 2026-06-15 00z steps 3/6/9: lon
-  normalized, T 277–287 K, Td ≤ T, de-accumulated precip ≥ 0 and SW ramp
-  0→129 W m⁻²).
+  extra. The ENS (`enfo`, member dim) stream is a follow-up. Live-verified
+  (Colorado, 2026-06-15 00z): IFS steps 3/6/9 (lon normalized, T 277–287 K,
+  Td ≤ T, de-accumulated precip ≥ 0 and SW ramp 0→129 W m⁻²); AIFS steps
+  6/12/18 (multi-lead, in-range T, precip ≥ 0).
 
 - **EM-Earth unblocked via FRDR anonymous HTTPS** (`source: "frdr"` +
   `data_dir` staging on the `em_earth` connector). FRDR's documented stable

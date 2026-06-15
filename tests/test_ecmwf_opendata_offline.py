@@ -31,9 +31,9 @@ def test_registered():
     assert "ecmwf_opendata" in list_providers()
 
 
-def test_one_product():
-    ids = [p.id for p in asyncio.run(ECMWFOpenDataConnector().list_products())]
-    assert ids == ["ecmwf_opendata:ifs_0p25"]
+def test_products_ifs_and_aifs():
+    ids = {p.id for p in asyncio.run(ECMWFOpenDataConnector().list_products())}
+    assert ids == {"ecmwf_opendata:ifs_0p25", "ecmwf_opendata:aifs_0p25"}
 
 
 def test_mappings_cover_era5_like_set():
@@ -48,29 +48,41 @@ def test_mappings_cover_era5_like_set():
     assert CanonicalVar.PRECIPITATION_FLUX not in {c for _p, c in _INST_FIELDS}
 
 
-def test_step_horizon_and_spacing():
-    assert _max_step(0) == 360 and _max_step(12) == 360     # long runs
-    assert _max_step(6) == 90 and _max_step(18) == 90       # short runs
-    assert _step_available(3, 0) and _step_available(144, 0)        # 3-hourly to 144
-    assert not _step_available(147, 0) and _step_available(150, 0)  # 6-hourly after
-    assert not _step_available(93, 6)                              # past the 90h horizon
-    assert _step_available(0, 0)                                   # analysis step
+def test_step_horizon_and_spacing_ifs():
+    assert _max_step(0, "ifs") == 360 and _max_step(12, "ifs") == 360   # long runs
+    assert _max_step(6, "ifs") == 90 and _max_step(18, "ifs") == 90     # short runs
+    assert _step_available(3, 0, "ifs") and _step_available(144, 0, "ifs")        # 3-hourly to 144
+    assert not _step_available(147, 0, "ifs") and _step_available(150, 0, "ifs")  # 6-hourly after
+    assert not _step_available(93, 6, "ifs")                            # past the 90h horizon
+    assert _step_available(0, 0, "ifs")                                 # analysis step
+
+
+def test_step_horizon_and_spacing_aifs():
+    # AIFS: 6-hourly to 360 h, all cycles.
+    assert _max_step(0, "aifs") == 360 and _max_step(6, "aifs") == 360
+    assert _step_available(6, 0, "aifs") and _step_available(360, 6, "aifs")
+    assert not _step_available(3, 0, "aifs")        # no 3-hourly steps
+    assert not _step_available(366, 0, "aifs")      # past horizon
 
 
 def test_prev_step_spacing():
-    assert _prev_step(3) == 0 and _prev_step(6) == 3       # 3h spacing early
-    assert _prev_step(144) == 141
-    assert _prev_step(150) == 144 and _prev_step(156) == 150  # 6h spacing late
+    assert _prev_step(3, "ifs") == 0 and _prev_step(6, "ifs") == 3       # 3h spacing early
+    assert _prev_step(144, "ifs") == 141
+    assert _prev_step(150, "ifs") == 144 and _prev_step(156, "ifs") == 150  # 6h spacing late
+    assert _prev_step(6, "aifs") == 0 and _prev_step(120, "aifs") == 114    # always 6h
 
 
 def test_urls():
     cyc = datetime(2026, 6, 15, 0)
-    assert _file_url(cyc, 3).endswith(
+    assert _file_url("ifs", cyc, 3).endswith(
         "20260615/00z/ifs/0p25/oper/20260615000000-3h-oper-fc.grib2"
     )
+    assert _file_url("aifs-single", cyc, 6).endswith(
+        "20260615/00z/aifs-single/0p25/oper/20260615000000-6h-oper-fc.grib2"
+    )
     # ECMWF index REPLACES .grib2 (not appended like NOAA .idx).
-    assert _index_url(cyc, 3).endswith("20260615000000-3h-oper-fc.index")
-    assert ".grib2" not in _index_url(cyc, 3)
+    assert _index_url("ifs", cyc, 3).endswith("20260615000000-3h-oper-fc.index")
+    assert ".grib2" not in _index_url("ifs", cyc, 3)
 
 
 def test_parse_ecmwf_index():

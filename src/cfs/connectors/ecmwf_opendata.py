@@ -1,10 +1,19 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2026 CFS Contributors
-"""ECMWF open-data connector — IFS HRES forecast (0.25° global, AWS GRIB2).
+"""ECMWF open-data connector — IFS HRES + AIFS forecast (0.25° global, AWS GRIB2).
 
-The major free, real-time, **global** forecast outside NOAA: ECMWF's
-open-data IFS HRES (``oper`` stream), 0.25° global, read from the AWS Open Data
-mirror ``ecmwf-forecasts`` with byte-range GRIB2 access. ECMWF publishes a
+The major free, real-time, **global** forecast outside NOAA. Two products from
+ECMWF's open data, both 0.25° global, read from the AWS Open Data mirror
+``ecmwf-forecasts`` with byte-range GRIB2 access:
+
+* ``ecmwf_opendata:ifs_0p25`` — the physics IFS HRES (``oper`` stream): to
+  360 h for 00/12Z and 90 h for 06/18Z, 3-hourly to 144 h then 6-hourly.
+* ``ecmwf_opendata:aifs_0p25`` — ECMWF's **machine-learning** model
+  (``aifs-single``): 6-hourly to 360 h, all cycles.
+
+Both share the same surface forcing fields, JSON ``.index`` format, and
+accumulation handling; they differ only in the model path segment and the step
+grid. ECMWF publishes a
 JSON ``.index`` sidecar (one object per message, with ``_offset``/``_length``)
 rather than the NOAA colon ``.idx``; :func:`cfs.connectors.protocols.grib_idx.parse_ecmwf_index`
 handles it, and the byte-range fetch + cfgrib decode + regular-grid window are
@@ -92,32 +101,56 @@ _MAPPINGS: list[VariableMapping] = (
     + [VariableMapping(p, canon) for p, canon, _s in _ACCUM_FIELDS]
 )
 
-_STEP_HOURLY_MAX = 144  # 3-hourly to 144 h, then 6-hourly
+_STEP_HOURLY_MAX = 144  # IFS: 3-hourly to 144 h, then 6-hourly
+
+# Products keyed by id suffix. `model` is the archive path segment; `spacing`
+# selects the step grid: "ifs" (3-hourly to 144 h then 6-hourly; 360 h for
+# 00/12Z, 90 h for 06/18Z) vs "aifs" (6-hourly to 360 h, all cycles — the ML
+# model). `freq` is the valid-time sampling stride for that grid.
+_PRODUCTS: dict[str, dict[str, str]] = {
+    "ifs_0p25": {
+        "model": "ifs", "spacing": "ifs", "freq": "3h",
+        "name": "ECMWF IFS HRES 0.25° forecast (global)",
+        "blurb": "ECMWF open-data IFS HRES (oper) surface forcing",
+    },
+    "aifs_0p25": {
+        "model": "aifs-single", "spacing": "aifs", "freq": "6h",
+        "name": "ECMWF AIFS 0.25° ML forecast (global)",
+        "blurb": "ECMWF open-data AIFS-single (oper) surface forcing — ECMWF's "
+                 "machine-learning model",
+    },
+}
 
 
-def _max_step(cycle_hour: int) -> int:
+def _max_step(cycle_hour: int, spacing: str) -> int:
+    if spacing == "aifs":
+        return 360
     return 360 if cycle_hour in (0, 12) else 90
 
 
-def _step_available(step: int, cycle_hour: int) -> bool:
-    if not (0 <= step <= _max_step(cycle_hour)):
+def _step_available(step: int, cycle_hour: int, spacing: str) -> bool:
+    if not (0 <= step <= _max_step(cycle_hour, spacing)):
         return False
+    if spacing == "aifs":
+        return step % 6 == 0
     return step % 3 == 0 if step <= _STEP_HOURLY_MAX else step % 6 == 0
 
 
-def _prev_step(step: int) -> int:
-    """Previous available step (3 h spacing to 144 h, 6 h after)."""
+def _prev_step(step: int, spacing: str) -> int:
+    """Previous available step (AIFS: 6 h; IFS: 3 h to 144 h, 6 h after)."""
+    if spacing == "aifs":
+        return step - 6
     return step - 3 if step <= _STEP_HOURLY_MAX else step - 6
 
 
-def _file_url(cycle: datetime, step: int) -> str:
+def _file_url(model: str, cycle: datetime, step: int) -> str:
     d, h = cycle.strftime("%Y%m%d"), cycle.strftime("%H")
-    return f"{GRIB_BASE}/{d}/{h}z/ifs/0p25/oper/{d}{h}0000-{step}h-oper-fc.grib2"
+    return f"{GRIB_BASE}/{d}/{h}z/{model}/0p25/oper/{d}{h}0000-{step}h-oper-fc.grib2"
 
 
-def _index_url(cycle: datetime, step: int) -> str:
+def _index_url(model: str, cycle: datetime, step: int) -> str:
     # ECMWF's .index REPLACES the .grib2 suffix (unlike NOAA's appended .idx).
-    return _file_url(cycle, step)[: -len(".grib2")] + ".index"
+    return _file_url(model, cycle, step)[: -len(".grib2")] + ".index"
 
 
 def _find(records, param: str, levtype: str = "sfc"):
@@ -131,23 +164,21 @@ def _find(records, param: str, levtype: str = "sfc"):
 @register("ecmwf_opendata")
 class ECMWFOpenDataConnector(BaseForcingConnector):
     slug = "ecmwf_opendata"
-    display_name = "ECMWF open-data IFS HRES forecast (0.25°, global)"
+    display_name = "ECMWF open-data IFS HRES + AIFS forecast (0.25°, global)"
     base_url = GRIB_BASE
     protocol = "http"
 
     async def list_products(self) -> list[ForcingProduct]:
         return [
             ForcingProduct(
-                id=f"{self.slug}:ifs_0p25",
+                id=f"{self.slug}:{suffix}",
                 provider=self.slug,
-                name="ECMWF IFS HRES 0.25° forecast (global)",
+                name=spec["name"],
                 description=(
-                    "ECMWF open-data IFS HRES (oper) surface forcing, byte-range read "
-                    "from the GRIB2 files on the ecmwf-forecasts AWS mirror. The most "
-                    "recent 00/06/12/18Z cycle at/before the requested start supplies "
-                    "the valid-time forcing (to 360 h for 00/12Z, 90 h for 06/18Z; "
-                    "3-hourly to 144 h, then 6-hourly). Precipitation and radiation "
-                    "are de-accumulated to fluxes."
+                    f"{spec['blurb']}, byte-range read from the GRIB2 files on the "
+                    "ecmwf-forecasts AWS mirror. The most recent 00/06/12/18Z cycle "
+                    "at/before the requested start supplies the valid-time forcing. "
+                    "Precipitation and radiation are de-accumulated to fluxes."
                 ),
                 variables=[
                     ProductVariable(canonical=m.canonical, source_name=m.source_name)
@@ -156,11 +187,15 @@ class ECMWFOpenDataConnector(BaseForcingConnector):
                 resolution_deg=0.25,
                 crs="EPSG:4326",
                 bbox=BoundingBox(min_lon=-180, min_lat=-90, max_lon=180, max_lat=90),
-                temporal=TemporalExtent(resolution=TemporalResolution.THREE_HOURLY),
+                temporal=TemporalExtent(
+                    resolution=TemporalResolution.THREE_HOURLY
+                    if spec["spacing"] == "ifs" else TemporalResolution.SIX_HOURLY
+                ),
                 protocol=Protocol.REST,
                 license="ECMWF open data (CC-BY-4.0; attribution required)",
-                citation="ECMWF Integrated Forecasting System (IFS) open data.",
+                citation="ECMWF Integrated Forecasting System (IFS) / AIFS open data.",
             )
+            for suffix, spec in _PRODUCTS.items()
         ]
 
     @staticmethod
@@ -185,6 +220,8 @@ class ECMWFOpenDataConnector(BaseForcingConnector):
 
         t0 = time.monotonic()
         product = self._require_product(product_id, await self.list_products())
+        spec = _PRODUCTS[product_id.split(":", 1)[1]]
+        model, spacing = spec["model"], spec["spacing"]
         settings = get_settings()
         self._guard_area(bbox, settings)
         self._require_cfgrib()
@@ -197,19 +234,19 @@ class ECMWFOpenDataConnector(BaseForcingConnector):
 
         cycle = cycle_for(time_range.start, step_h=6)
         cyc_h = cycle.hour
-        valid_times = pd.date_range(time_range.start, time_range.end, freq="3h")
+        valid_times = pd.date_range(time_range.start, time_range.end, freq=spec["freq"])
         warnings: list[str] = []
 
         def _piece(valid):
             step = int((valid - cycle).total_seconds() // 3600)
-            if not _step_available(step, cyc_h):
+            if not _step_available(step, cyc_h, spacing):
                 warnings.append(
                     f"ECMWF step {step}h (valid {valid:%Y-%m-%dT%H}) unavailable "
-                    f"from cycle {cycle:%Y%m%d %Hz} (max {_max_step(cyc_h)}h)"
+                    f"from cycle {cycle:%Y%m%d %Hz} (max {_max_step(cyc_h, spacing)}h)"
                 )
                 return None
-            url = _file_url(cycle, step)
-            recs = parse_ecmwf_index(http_range(_index_url(cycle, step), 0, "").decode())
+            url = _file_url(model, cycle, step)
+            recs = parse_ecmwf_index(http_range(_index_url(model, cycle, step), 0, "").decode())
             per_var = []
             for param, _canon in selected_inst:
                 rng = _find(recs, param)
@@ -217,10 +254,10 @@ class ECMWFOpenDataConnector(BaseForcingConnector):
                     per_var.append(read_message(url, rng[0], rng[1], param, bbox, label="ECMWF"))
             # Accumulated fields: de-accumulate against the previous step (absent at step 0).
             if selected_accum and step > 0:
-                prev = _prev_step(step)
+                prev = _prev_step(step, spacing)
                 interval = (step - prev) * 3600.0
-                purl = _file_url(cycle, prev)
-                precs = parse_ecmwf_index(http_range(_index_url(cycle, prev), 0, "").decode())
+                purl = _file_url(model, cycle, prev)
+                precs = parse_ecmwf_index(http_range(_index_url(model, cycle, prev), 0, "").decode())
                 for param, _canon, scale in selected_accum:
                     cr = _find(recs, param)
                     pr = _find(precs, param)
@@ -250,7 +287,7 @@ class ECMWFOpenDataConnector(BaseForcingConnector):
             bbox=bbox,
             time_range=time_range,
             provenance=(
-                f"ECMWF IFS HRES (oper) 0p25 via ecmwf-forecasts AWS byte-range (cfgrib); "
+                f"ECMWF {model} (oper) 0p25 via ecmwf-forecasts AWS byte-range (cfgrib); "
                 f"cycle {cycle:%Y%m%d %Hz}; tp/ssrd/strd de-accumulated; canonical-v1"
             ),
             t0=t0,
