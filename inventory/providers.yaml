@@ -1,8 +1,10 @@
 # CFS Provider Inventory
-# Total providers: 33 — 31 live-verified + 2 offline/access-gated.
-# Forecasts: gfs (deterministic) + gefs (ensemble, member dim) via S3 GRIB2
-# byte-range + cfgrib. gefs exposes instantaneous fields plus bucket-de-accumulated
-# precip + down shortwave/longwave radiation, and specific humidity derived from RH.
+# Total providers: 34 — 32 live-verified + 2 offline/access-gated.
+# Forecasts: gfs + gefs (NOAA global) and ecmwf_opendata (ECMWF IFS HRES, global)
+# via GRIB2 byte-range + cfgrib (shared grib_idx). gefs de-buckets accumulated/
+# averaged precip + radiation and derives q from RH; ecmwf_opendata de-accumulates
+# tp/ssrd/strd (JSON .index, byte range direct). (HRRR/RAP/NAM short-range CONUS
+# forecast connectors live on their own feature branches pending merge.)
 # Offline/blocked: mswep (rclone), em_earth (AWS creds).
 #
 # verified: true = live-verified against the upstream store (auth-gated ones with
@@ -785,6 +787,31 @@
     - surface_downwelling_longwave_flux   # DLWRF surface, bucket-de-averaged
     - specific_humidity     # derived from 2 m RH + T + surface pressure (Bolton 1980)
   note: "Ensemble companion to gfs (same .idx/byte-range/cfgrib machinery), pgrb2sp25 select product (3-hourly to f240), returns a member dim. Instantaneous fields identity SI; precip (APCP, accumulation) + radiation (DSWRF/DLWRF, average) ship as 6-hour buckets (0-3,0-6,6-9,...) DE-BUCKETED by lead hour (cur-prev for acc, 2*cur-prev for ave) -> APCP to flux, radiation W m-2; value-sign reset detection unsafe here. specific_humidity DERIVED from 2 m RH + T + surface pressure (RH fetched as input only, never exposed raw). LIVE-VERIFIED (precip non-negative 0-9 mm/hr, SW ~0 overnight after de-averaging, derived q 9-17 g/kg, member spread)."
+  status: implemented
+  verified: true
+
+- slug: ecmwf_opendata
+  name: ECMWF open-data IFS HRES forecast (0.25°, global, via AWS GRIB2)
+  protocol: http
+  base_url: https://ecmwf-forecasts.s3.amazonaws.com
+  resolution_deg: 0.25
+  grid: regular            # 0-360 longitude, normalized on subset
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: 3hourly
+  license: "ECMWF open data (CC-BY-4.0; attribution required)"
+  citation: "ECMWF Integrated Forecasting System (IFS) open data."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # 2t (identity, K)
+    - dewpoint_temperature                  # 2d (identity, K)
+    - eastward_wind                         # 10u
+    - northward_wind                        # 10v
+    - surface_air_pressure                  # sp
+    - precipitation_flux                    # tp (m, accumulated) de-accumulated -> kg m-2 s-1
+    - surface_downwelling_shortwave_flux    # ssrd (J m-2, accumulated) de-accumulated -> W m-2
+    - surface_downwelling_longwave_flux     # strd (J m-2, accumulated) de-accumulated -> W m-2
+  note: "The major free GLOBAL forecast outside NOAA. IFS HRES (oper) 0.25deg, read from the ecmwf-forecasts AWS Open Data mirror (data.ecmwf.int uses a different, sometimes TLS-intercepted host). ECMWF ships a JSON .index sidecar (one object/message with _offset/_length, byte range direct) that REPLACES the .grib2 suffix — parsed by grib_idx.parse_ecmwf_index; byte-range fetch + cfgrib decode + regular-grid window shared. Forecast model like gfs: most recent 00/06/12/18Z cycle <= start; 00/12Z to 360h, 06/18Z to 90h; 3-hourly to 144h then 6-hourly. 2t/2d/10u/10v/sp identity SI (dewpoint emitted directly, matching era5_arco). tp/ssrd/strd ACCUMULATE from step 0 (no within-run reset) -> de-accumulated against the previous step: tp m->kg m-2 (*1000) /interval -> flux; ssrd/strd J m-2 /interval -> W m-2; absent at step 0. RADIATION CONFIRMED present in the free set (resolves the spec's open question). AIFS (aifs-single) + ENS (enfo, member dim) are follow-ups. LIVE-VERIFIED (Colorado 2026-06-15 00z steps 3/6/9: lon normalized, T 277-287 K, Td<=T, de-accum precip>=0 + SW ramp 0-129)."
   status: implemented
   verified: true
 
