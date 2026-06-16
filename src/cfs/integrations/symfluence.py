@@ -1428,7 +1428,7 @@ def register() -> None:
     """SYMFLUENCE plugin hook (``symfluence.plugins`` entry point, zero-arg).
 
     Called by SYMFLUENCE's plugin discovery on ``import symfluence``. Adds the
-    community backend to ``R.acquisition_backends`` (the framework's selection
+    community backend to ``R.acquisition_handlers`` (the framework's selection
     layer decides per request whether it serves) and the schema-keyed
     canonical-v1 dataset handler to ``R.dataset_handlers`` (resolved from the
     acquisition manifest's declared schema). Raises ``ImportError`` when
@@ -1437,7 +1437,7 @@ def register() -> None:
     """
     from symfluence.core.registries import R
 
-    R.acquisition_backends.add("community", CommunityForcingBackend)
+    R.acquisition_handlers.add("community", CommunityForcingBackend)
     R.dataset_handlers.add("canonical-v1", CanonicalV1Handler)
 
 
