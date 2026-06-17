@@ -48,6 +48,27 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 if TYPE_CHECKING:
     import xarray as xr
 
+# True only once this module has finished importing. The symfluence import
+# below triggers SYMFLUENCE's bootstrap; if THIS module was imported before
+# symfluence, that bootstrap re-enters to load the cfs plugin entry point while
+# this module is still partially initialized. ``register`` is defined here,
+# ahead of that import, and no-ops until the module is ready — so the re-entrant
+# call is quiet (no "failed to load … skipping" warning) and the module-bottom
+# self-register performs the real registration.
+_MODULE_READY = False
+
+
+def register() -> None:
+    """SYMFLUENCE plugin hook (``symfluence.plugins`` entry point, zero-arg).
+
+    Defers while this module is still importing (re-entrant bootstrap); the real
+    work is in :func:`_register_impl`.
+    """
+    if not _MODULE_READY:  # pragma: no cover - re-entrant bootstrap during import
+        return
+    _register_impl()
+
+
 # Resolve the SYMFLUENCE pieces defensively so importing this module never
 # hard-fails when SYMFLUENCE is not installed.
 try:  # pragma: no cover - exercised only with SYMFLUENCE present
@@ -74,7 +95,33 @@ except Exception:  # noqa: BLE001 - any import failure means "not available"
 #: (ObservationBackend/ObservationCapability/ObservationRequest) and left the
 #: AcquisitionBackend surface untouched — verified against the contract diff
 #: before re-targeting.
-TARGET_INTERFACE_VERSION = "0.2.0"
+TARGET_INTERFACE_VERSION = "0.4.0"
+
+
+#: Source-data license posture per dataset family (acquisition contract 0.4.0):
+#: (redistribution, data_license, attribution). A community backend re-serves
+#: regridded data from its own store, which is redistribution — so the framework
+#: gate refuses any family declared ``restricted`` and propagates the attribution
+#: string. Verified against primary licence sources (2026-06; note Copernicus
+#: moved to CC-BY-4.0 on 2025-07-02, clearing ERA5/CARRA/CERRA/WFDE5). Families
+#: not listed default to ``("unknown", "", "")``. Known-restricted families
+#: (E-OBS non-commercial+registration, MSWEP CC-BY-NC, NA-CORDEX CC-BY-NC-SA) are
+#: declared restricted here and deliberately NOT exposed in DATASET_SPECS.
+_FORCING_POSTURE: dict[str, tuple[str, str, str]] = {
+    "ERA5": ("attribution", "CC-BY-4.0", "Copernicus Climate Change Service (C3S)"),
+    "CARRA": ("attribution", "CC-BY-4.0", "Copernicus Climate Change Service (C3S)"),
+    "CERRA": ("attribution", "CC-BY-4.0", "Copernicus Climate Change Service (C3S)"),
+    "NLDAS": ("open", "CC0-1.0", "NASA Land Data Assimilation Systems"),
+    "NEX-GDDP": ("open", "CC0-1.0", "NASA NEX-GDDP-CMIP6 (NCCS)"),
+    "CONUS404": ("open", "CC0-1.0", "U.S. Geological Survey (CONUS404)"),
+    "DAYMET": ("open", "public-domain", "ORNL DAAC (Daymet V4)"),
+    "AORC": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA Office of Water Prediction (AORC)"),
+    "NWM3": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA National Water Model"),
+    "HRRR": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA High-Resolution Rapid Refresh"),
+    "CFS": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA Climate Forecast System"),
+    "RDRS": ("attribution", "ECCC-Data-Servers-End-use-Licence-2.1", "Environment and Climate Change Canada"),
+    "CASR": ("attribution", "ECCC-Data-Servers-End-use-Licence-2.1", "Environment and Climate Change Canada"),
+}
 
 
 #: CFS canonical-v1 variable names -> SYMFLUENCE CFIF names.
@@ -681,6 +728,7 @@ class CommunityForcingBackend:
         contract = _require_contract()
         caps = []
         for spec in DATASET_SPECS:
+            redis, lic, attribution = _FORCING_POSTURE.get(spec.family, ("unknown", "", ""))
             for dataset_id in spec.dataset_ids:
                 caps.append(contract.DatasetCapability(
                     dataset_id=dataset_id,
@@ -691,6 +739,9 @@ class CommunityForcingBackend:
                     auth=spec.auth,
                     parity_grade=spec.parity,
                     notes=spec.notes,
+                    redistribution=contract.Redistribution(redis),
+                    data_license=lic,
+                    attribution=attribution,
                 ))
         return tuple(caps)
 
@@ -1424,30 +1475,35 @@ class CanonicalV1Handler(_DatasetBase):
 # ── Registration ─────────────────────────────────────────────────────
 
 
-def register() -> None:
-    """SYMFLUENCE plugin hook (``symfluence.plugins`` entry point, zero-arg).
+def _register_impl() -> None:
+    """Actual registration logic for :func:`register` (idempotent overwrite).
 
-    Called by SYMFLUENCE's plugin discovery on ``import symfluence``. Adds the
-    community backend to ``R.acquisition_handlers`` (the framework's selection
-    layer decides per request whether it serves) and the schema-keyed
-    canonical-v1 dataset handler to ``R.dataset_handlers`` (resolved from the
+    Adds the community forcing backend to ``R.acquisition_backends`` — the
+    registry SYMFLUENCE's forcing-selection layer consults (``select_backend``);
+    the layer decides per request whether it serves. The protocol backend is
+    deliberately NOT placed in ``R.acquisition_handlers`` (that registry holds
+    legacy download/process handlers and is bridged to the protocol by the
+    framework's own ``NativeBackend``; a protocol backend there serves nothing
+    and would fail the legacy handler contract). The schema-keyed canonical-v1
+    dataset handler registers under ``R.dataset_handlers`` (resolved from the
     acquisition manifest's declared schema). Raises ``ImportError`` when
-    SYMFLUENCE is absent — discovery logs and skips a failing plugin, so this
-    is safe by design. Re-registration is an idempotent overwrite.
+    SYMFLUENCE is absent — discovery logs and skips a failing plugin.
     """
     from symfluence.core.registries import R
 
-    R.acquisition_handlers.add("community", CommunityForcingBackend)
+    R.acquisition_backends.add("community", CommunityForcingBackend)
     R.dataset_handlers.add("canonical-v1", CanonicalV1Handler)
 
 
-# Self-register when SYMFLUENCE is importable. This complements the entry
-# point: if THIS module is imported before symfluence, the defensive import
-# above triggers symfluence's bootstrap mid-module, and its plugin discovery
-# then sees a partially-initialized module (no ``register`` yet) and skips the
-# cfs entry point. Registering here, at the end of the module body, makes the
-# backend available regardless of import order; register() is idempotent so
-# the entry-point path stays harmless.
+# The module is now fully defined; register() may do its real work. This
+# complements the entry point: if THIS module was imported before symfluence,
+# the defensive import above already triggered symfluence's bootstrap, whose
+# plugin discovery called register() while _MODULE_READY was False (a quiet
+# no-op). Flipping the flag and registering here makes the backend available
+# regardless of import order; _register_impl() is idempotent so the normal
+# entry-point path stays harmless.
+_MODULE_READY = True
+
 if HAVE_SYMFLUENCE:  # pragma: no cover - exercised only with SYMFLUENCE present
     import contextlib
 
