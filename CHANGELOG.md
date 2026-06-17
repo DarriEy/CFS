@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> The posture-only expansion tier requires SYMFLUENCE with the **posture-only
+> forcing gate** (acquisition contract 0.4.0). Against an older SYMFLUENCE those
+> ungraded datasets are declined and acquisition falls back to native — no
+> breakage, the drop-ins simply don't activate until the framework ships.
+
+### Added
+
+- **Source-data license posture** on every `DatasetCapability` (contract 0.4.0):
+  a centralized `_FORCING_POSTURE` map sets `redistribution`/`data_license`/
+  `attribution` per dataset family, verified against primary licence sources
+  (Copernicus → CC-BY-4.0 as of 2025-07-02 for ERA5/CARRA/CERRA; NOAA NODD →
+  attribution; NASA → CC0; ECCC → end-use-licence). `TARGET_INTERFACE_VERSION`
+  0.2.0 → 0.4.0.
+- **Posture-only expansion tier** — 13 national/global forcing datasets with no
+  native SYMFLUENCE pipeline, exposed as ungraded (`parity=None`) capabilities
+  admitted by the framework's posture-only forcing gate on their open/
+  attribution licence, each live round-trip verified: **GFS, ECMWF (IFS open
+  data), NAM, RAP, NARR** (NOAA); **GLDAS, FLDAS, MERRA2, GPM IMERG** (NASA);
+  **gridMET, nClimGrid-daily, PERSIANN-CDR, CHIRPS**. Excluded by licence:
+  E-OBS / MSWEP / NA-CORDEX (non-commercial). Verification deferred (auth-gated):
+  WFDE5 / BARRA2 / EM-Earth. `tests/test_forcing_expansion_verified_network.py`
+  is the standing live-verification evidence.
+
+### Fixed
+
+- **Backend registration target**: `CommunityForcingBackend` now registers in
+  `R.acquisition_backends` (where SYMFLUENCE's forcing `select_backend` looks),
+  not `R.acquisition_handlers`. The previous handlers registration meant
+  selection could never find it (routing broken) and it tripped the framework's
+  legacy handler-contract test. Native handlers keep their own
+  `acquisition_handlers` slots, bridged to the protocol by `NativeBackend`.
+- The re-entrant-bootstrap **plugin-skip warning** when
+  `cfs.integrations.symfluence` is imported before SYMFLUENCE: `register()` is
+  defined ahead of the symfluence import and no-ops until the module is ready;
+  registration self-heals regardless of import order.
+
 ## [0.5.0] — 2026-06-15
 
 ### Added

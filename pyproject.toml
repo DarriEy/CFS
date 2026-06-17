@@ -135,6 +135,8 @@ module = [
     "cfgrib.*",
     "geopandas.*",
     "shapely.*",
+    "pandas",
+    "pandas.*",
 ]
 ignore_missing_imports = true
 
