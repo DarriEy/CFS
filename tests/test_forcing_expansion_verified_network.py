@@ -56,14 +56,13 @@ def _small_box(b):
 
 @pytest.mark.parametrize("product", list(_CASES), ids=[p.split(":")[0] for p in _CASES])
 def test_posture_only_dataset_returns_gridded_data(product):
-    import cfs
-    from cfs.core.models import BoundingBox, TimeRange  # noqa: F401
-
-    bbox_cfg, (start, end), var = _CASES[product]
-    # Resolve a small in-domain bbox from the connector's declared product domain.
     import asyncio
 
+    import cfs
+    from cfs.core.models import BoundingBox, TimeRange
     from cfs.core.registry import discover, get_connector
+
+    bbox_cfg, (start, end), var = _CASES[product]
     discover()
     slug = product.split(":")[0]
     conn_cls = get_connector(slug)
@@ -72,12 +71,13 @@ def test_posture_only_dataset_returns_gridded_data(product):
         async with conn_cls() as c:
             p = next(pp for pp in await c.list_products() if pp.id == product)
             return p.bbox
-    bbox = bbox_cfg if bbox_cfg is not None else None
-    if bbox is None:
+
+    if bbox_cfg is None:
+        # Small in-domain box from the connector's declared product domain.
         bbox = _small_box(asyncio.run(_domain_box()))
     else:
-        from cfs.core.models import BoundingBox as BB
-        bbox = BB(min_lon=bbox[0], min_lat=bbox[1], max_lon=bbox[2], max_lat=bbox[3])
+        bbox = BoundingBox(min_lon=bbox_cfg[0], min_lat=bbox_cfg[1],
+                           max_lon=bbox_cfg[2], max_lat=bbox_cfg[3])
 
     ds, result = cfs.fetch_sync(product, bbox, TimeRange(start=start, end=end), [var])
     real = int(ds.to_array().notnull().sum())
