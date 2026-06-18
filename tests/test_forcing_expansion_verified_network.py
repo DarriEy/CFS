@@ -12,9 +12,19 @@ These reach real upstreams, so they are ``network``-marked and deselected in CI
 drop-in. Forecast products (GFS/ECMWF/NAM/RAP) keep only a recent horizon, so a
 CURRENT window is used; land-only products (CHIRPS) need a land bbox.
 
-Auth-gated / unverified-here products (WFDE5/CDS, BARRA2/NCI, EM-Earth/FRDR,
-CMORPH, CHIRTS, GEFS, NWM operational) are intentionally NOT in DATASET_SPECS
-and not covered here.
+The forcing-expansion connectors (2026-06) are covered the same way: the
+archive-capable, anonymous ``cfsv2`` / ``w5e5`` / ``livneh`` / ``terraclimate`` /
+``mrms`` each get a case below, with the window that was live-verified when the
+connector landed (recent for the ``cfsv2`` analysis stream and the rolling
+``mrms`` archive; a fixed historical window for the others). ``terraclimate`` is
+a registered connector verified here even though its monthly cadence keeps it out
+of DATASET_SPECS.
+
+Auth-gated / latest-run-only / unverified-here products (WFDE5/CDS, AgERA5/CDS,
+BARRA2/NCI, EM-Earth/FRDR, CMORPH, CHIRTS, GEFS, NWM operational, and the
+near-real-time ECCC HRDPS/RDPS/GEPS + DWD ICON-EU forecasts) are intentionally
+NOT covered here — the CDS ones are auth-gated and the forecast feeds keep no
+by-date archive, so a static parametrized case would be flaky.
 """
 from __future__ import annotations
 
@@ -26,8 +36,14 @@ pytestmark = [pytest.mark.network]
 
 _NOW = datetime.now()
 _LAND = (-100.0, 40.0, -99.0, 41.0)        # central US (Nebraska) — land, for land-only products
+_COLORADO = (-106.0, 39.0, -105.0, 40.0)   # land box matching the connectors' verified runs
 _RECENT = (_NOW - timedelta(days=1), _NOW + timedelta(days=1))   # forecast horizon
 _HIST = (datetime(2018, 6, 1), datetime(2018, 6, 2))            # archive window
+# CFSv2/CDAS analysis: a day-old cycle (leads f00-f09 from the cycle at/before
+# start) — bounded so only a handful of leads are fetched.
+_RECENT_CFS = (_NOW - timedelta(days=1), _NOW - timedelta(days=1) + timedelta(hours=6))
+# MRMS rolling S3 archive (~5.6 yr, no future): a short, settled past window.
+_RECENT_MRMS = (_NOW - timedelta(days=1), _NOW - timedelta(days=1) + timedelta(hours=3))
 
 # (product, bbox|None=domain-center small box, time_range, expect_var)
 _CASES = {
@@ -44,6 +60,12 @@ _CASES = {
     "nclimgrid_daily:daily":      (None, _HIST, "precipitation_flux"),
     "persiann_cdr:daily":         (None, _HIST, "precipitation_flux"),
     "chirps:daily_p05":           (_LAND, _HIST, "precipitation_flux"),
+    # Forcing-expansion connectors (2026-06).
+    "cfsv2:cdas_flux":            (None, _RECENT_CFS, "air_temperature"),
+    "w5e5:obsclim_daily":         (_COLORADO, (datetime(1979, 1, 1), datetime(1979, 1, 3)), "air_temperature"),
+    "livneh:daily":               (_COLORADO, (datetime(2011, 6, 1), datetime(2011, 6, 3)), "air_temperature"),
+    "terraclimate:monthly":       (_COLORADO, (datetime(2020, 6, 1), datetime(2020, 6, 15)), "air_temperature"),
+    "mrms:multisensor_qpe_01h":   (None, _RECENT_MRMS, "precipitation_flux"),
 }
 
 
