@@ -742,6 +742,234 @@
   status: implemented
   verified: true
 
+- slug: w5e5
+  name: W5E5 v2.0 bias-corrected forcing (0.5°, daily, global, via ISIMIP byte-range)
+  protocol: http
+  base_url: https://files.isimip.org/ISIMIP3a/SecondaryInputData/climate/atmosphere/obsclim/global/daily/historical/W5E5v2.0
+  resolution_deg: 0.5
+  grid: regular            # lat descending, lon -180..180
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: daily
+  license: "CC0-1.0 Public Domain (W5E5 v2.0; Lange et al., ISIMIP)"
+  citation: "Lange et al. (2021), W5E5 v2.0, ISIMIP. DOI 10.48364/ISIMIP.342217."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # tas (identity, K)
+    - specific_humidity                     # huss
+    - surface_air_pressure                  # ps
+    - wind_speed                            # sfcWind (SCALAR; no u/v in W5E5)
+    - precipitation_flux                    # pr (already kg m-2 s-1, identity)
+    - surface_downwelling_shortwave_flux    # rsds
+    - surface_downwelling_longwave_flux     # rlds
+  note: "Per-variable NetCDF4 decade-chunks on the ISIMIP file server (0.5-2.4 GB each), opened lazily via fsspec HTTP byte-range + h5netcdf (native chunk = 1 global slice/day, ~1 MB) so only bbox+time chunks transfer. Wind is scalar sfcWind -> wind_speed. Needs the 'climate' extra. Coverage 1979-2019. LIVE-VERIFIED 2026-06-18 (Colorado 1979: T 245-262 K, Psfc 67-79 kPa, wind 2-4 m/s)."
+  status: implemented
+  verified: true
+
+- slug: mrms
+  name: NOAA MRMS MultiSensor QPE (1 km, hourly, CONUS; precip only, via S3 GRIB2)
+  protocol: http
+  base_url: https://noaa-mrms-pds.s3.amazonaws.com
+  resolution_deg: 0.01
+  grid: regular            # 1-D lat/lon, 0-360 longitude normalized on subset
+  auth: anonymous
+  bbox: [-130.0, 20.0, -60.0, 55.0]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "NOAA/NSSL Multi-Radar/Multi-Sensor (MRMS) QPE."
+  products: 1
+  canonical_variables:
+    - precipitation_flux                    # MultiSensor_QPE_01H_Pass2 mm/h -> flux (/3600)
+  note: "PRECIP-ONLY (cannot serve the 8-var set; pair with a full-forcing source). Per-timestamp gzip-compressed GRIB2 on noaa-mrms-pds; connector lists the S3 prefix per UTC day, picks the file nearest each valid hour, gunzips, decodes one message with cfgrib. Negative no-coverage/missing sentinels masked to NaN. S3 retention is a rolling ~5.6 yr window (earliest ~2020-10-14). LIVE-VERIFIED 2026-06-17 (Gulf Coast max 54.5 mm/h)."
+  status: implemented
+  verified: true
+
+- slug: terraclimate
+  name: TerraClimate global monthly climate & water balance (~4 km, via THREDDS OPeNDAP)
+  protocol: opendap
+  base_url: http://thredds.northwestknowledge.net:8080/thredds/dodsC
+  resolution_deg: 0.0416667
+  grid: regular            # 1/24°, lat descending, lon -180..180
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: monthly
+  license: "CC0-1.0 (public domain); cite Abatzoglou et al. 2018, Sci. Data 5:170191."
+  citation: "Abatzoglou, J.T., et al. (2018), TerraClimate, Sci. Data 5:170191."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # mean of tmax/tmin (degC -> K)
+    - precipitation_flux                    # ppt mm/month / seconds-in-month -> kg m-2 s-1
+    - surface_downwelling_shortwave_flux    # srad W/m^2 (identity)
+    - wind_speed                            # ws m/s scalar (identity)
+  note: "MONTHLY climatological/water-balance forcing, NOT sub-daily. One aggregated NetCDF per variable via Climatology Lab THREDDS OPeNDAP. tmax/tmin -> mean tair; ppt mm/month -> flux per-month. Int16/Int32 scale/offset auto-applied. LIVE-VERIFIED 2026-06-18 (Tair 280-299 K, precip ~1-2 mm/day, srad 271-298 W/m2, wind 3.5-5.6 m/s). NOTE: OPeNDAP aggregation uses underscore _1950_CurrentYear for ALL vars (the srad/swe hyphen is catalog-only)."
+  status: implemented
+  verified: true
+
+- slug: livneh
+  name: Livneh CONUS daily gridded meteorology (1/16°, daily, via PSL OPeNDAP)
+  protocol: opendap
+  base_url: https://psl.noaa.gov/thredds/dodsC/Datasets/livneh/metvars
+  resolution_deg: 0.0625
+  grid: regular            # 0-360 longitude (235-293°E), normalized on subset
+  auth: anonymous
+  bbox: [-124.59, 25.16, -67.03, 52.84]
+  temporal_resolution: daily
+  license: "NOAA PSL / U.S. public domain (Livneh et al. 2015)"
+  citation: "Livneh, B. et al. (2015), A spatially comprehensive, hydrometeorological data set for Mexico, the U.S., and southern Canada 1950-2013, Sci. Data 2:150042."
+  products: 1
+  canonical_variables:
+    - precipitation_flux                    # prec mm/day -> kg m-2 s-1
+    - air_temperature                       # mean(tmax,tmin) degC -> K
+    - wind_speed                            # wind m/s (scalar, identity)
+  note: "PARTIAL forcing (4/8 native vars; no radiation/humidity/pressure, like Daymet/nClimGrid). PSL THREDDS OPeNDAP, one file per variable per year ({var}.{YYYY}.nc). air_temperature derived as daily mean (tmax+tmin)/2. LIVE-VERIFIED 2011 CO (T 277-294 K, wind 0.9-4.6 m/s). pydap; force IPv4 to avoid OPeNDAP hang."
+  status: implemented
+  verified: true
+
+- slug: agera5
+  name: AgERA5 agrometeorological indicators (0.1°, daily, global, via CDS)
+  protocol: cds_api
+  base_url: https://cds.climate.copernicus.eu/api
+  resolution_deg: 0.1
+  grid: regular
+  auth: cds                 # personal access token (post-2024 CDS); accept CC-BY-4.0 licence
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: daily
+  license: "CC-BY-4.0 (Copernicus, since 2025-07-02); accept on CDS"
+  citation: "C3S AgERA5 (DOI 10.24381/cds.6c68c9bb)."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # 2m_temperature 24h mean (K, identity)
+    - dewpoint_temperature                  # 2m_dewpoint_temperature 24h mean
+    - wind_speed                            # 10m_wind_speed 24h mean (scalar)
+    - precipitation_flux                    # Precipitation_Flux mm/day -> kg m-2 s-1
+    - surface_downwelling_shortwave_flux    # Solar_Radiation_Flux J/m2/day -> W/m2
+  note: "PARTIAL forcing (no longwave/surface-pressure/specific-humidity). CDS sis-agrometeorological-indicators; per-variable daily NetCDF, local bbox+time subset. Reuses CDSAPIMixin like wfde5/era5_cds. LIVE-VERIFIED 2026-06-18 via CDS (Alps: T 283-294 K, SWdown 248-334 W/m2, precip -> 9e-5 kg/m2/s). Auth-gated (CDS token); not in DATASET_SPECS, like wfde5."
+  status: implemented
+  verified: true
+
+- slug: eccc_hrdps
+  name: ECCC HRDPS forecast (2.5 km, continental North America, via MSC Datamart GRIB2)
+  protocol: http
+  base_url: https://dd.weather.gc.ca/today
+  resolution_deg: 0.0225
+  grid: projected           # 2.5 km rotated lat-lon (rotated_ll), 2-D lat/lon
+  auth: anonymous
+  bbox: [-152.0, 27.0, -40.0, 71.0]
+  temporal_resolution: hourly
+  license: "Environment and Climate Change Canada Data Servers End-use Licence v2.1"
+  citation: "Environment and Climate Change Canada (ECCC/MSC), HRDPS."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # TMP_AGL-2m (identity, K)
+    - specific_humidity                     # SPFH_AGL-2m
+    - surface_air_pressure                  # PRES_Sfc
+    - eastward_wind                         # UGRD_AGL-10m
+    - northward_wind                        # VGRD_AGL-10m
+    - precipitation_flux                    # PRATE_Sfc (instantaneous rate, identity)
+    - surface_downwelling_shortwave_flux    # DSWRF_Sfc (accum J/m2 -> de-accum /3600 -> W/m2)
+    - surface_downwelling_longwave_flux     # DLWRF_Sfc (accum J/m2 -> de-accum /3600 -> W/m2)
+  note: "Companion to rdrs (same provider/licence). MSC Datamart serves only the latest runs (today/ alias, ~24h, no by-date archive), one field+level per GRIB2 file, no .idx. Connector resolves the newest 00/06/12/18Z run, fetches each variable whole, decodes with cfgrib, 2-D rotated-grid bbox window. Leads f00-f48 hourly; PRATE absent at f00. LIVE-VERIFIED 2026-06-18 (T2m 274-291 K, SWdown 36-939 W/m2, LWdown 267-357 W/m2). Near-real-time forecast: NOT exposed in SYMFLUENCE DATASET_SPECS (latest-run-only)."
+  status: implemented
+  verified: true
+
+- slug: dwd_icon
+  name: DWD ICON-EU forecast (~6.5 km, Europe, regular lat-lon, via opendata.dwd.de GRIB2)
+  protocol: http
+  base_url: https://opendata.dwd.de/weather/nwp/icon-eu/grib
+  resolution_deg: 0.0625
+  grid: regular            # ICON-EU regular-lat-lon (1-D lat/lon)
+  auth: anonymous
+  bbox: [-23.5, 29.5, 62.5, 70.5]
+  temporal_resolution: hourly
+  license: "CC-BY-4.0 (DWD open data / GeoNutzV)"
+  citation: "Deutscher Wetterdienst (DWD), ICON-EU."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # T_2M (identity, K)
+    - surface_air_pressure                  # PS (identity, Pa)
+    - eastward_wind                         # U_10M
+    - northward_wind                        # V_10M
+    - precipitation_flux                    # TOT_PREC accum -> de-accum /3600 -> flux
+    - surface_downwelling_shortwave_flux    # ASWDIR_S + ASWDIFD_S avg -> de-averaged flux
+  note: "Shipped ICON-EU (regular lat-lon); ICON global is icosahedral-only (needs grid file, follow-up). Per-variable bzip2 GRIB2 on opendata.dwd.de, latest-run-only (no by-date archive), bz2.decompress + cfgrib. 6/8 vars (no downwelling longwave/specific humidity on EU regular grid). Precip de-accumulated; shortwave (dir+diff) de-averaged with lead weights. Hourly to 78h. LIVE-VERIFIED 2026-06-18 18Z Alps (T 290-304 K, Psfc 82-100 kPa, SWdown 179-577 W/m2). Near-real-time forecast: NOT exposed in SYMFLUENCE DATASET_SPECS."
+  status: implemented
+  verified: true
+
+- slug: eccc_geps
+  name: ECCC GEPS ensemble-mean forecast (0.5°, global, via MSC Datamart GRIB2)
+  protocol: http
+  base_url: https://dd.weather.gc.ca/today
+  resolution_deg: 0.5
+  grid: regular            # 1-D lat/lon, 0-360 longitude normalized on subset
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: 3hourly
+  license: "Environment and Climate Change Canada Data Servers End-use Licence v2.1"
+  citation: "Environment and Climate Change Canada (ECCC/MSC), GEPS."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # TMP_TGL_2m (identity, K)
+    - specific_humidity                     # SPFH_TGL_2
+    - surface_air_pressure                  # PRES_SFC_0
+    - eastward_wind                         # UGRD_TGL_10m
+    - northward_wind                        # VGRD_TGL_10m
+    - precipitation_flux                    # APCP_SFC_0 (accum mm -> de-accum / step-seconds)
+    - surface_downwelling_shortwave_flux    # DSWRF_SFC_0 (accum J/m2 -> de-accum / step-seconds)
+    - surface_downwelling_longwave_flux     # DLWRF_SFC_0 (accum J/m2 -> de-accum / step-seconds)
+  note: "20-member PERTURBED ENSEMBLE MEAN (filter_by_keys dataType=pf; control cf excluded). MSC Datamart latest-run-only (today/, no by-date archive), one field+level x all members per GRIB2 file (no .idx/byte-range, fetched whole + local subset). Cycles 00/12Z; leads 3-hourly to 192h then 6-hourly to 384h. Accumulated radiation/precip de-accumulated by ACTUAL per-step seconds (3h->6h). LIVE-VERIFIED 2026-06-18 12Z (T 280-290 K, SWdown 247-823 W/m2, precip 0-2.2e-4 kg/m2/s). Near-real-time forecast: NOT exposed in SYMFLUENCE DATASET_SPECS."
+  status: implemented
+  verified: true
+
+- slug: eccc_rdps
+  name: ECCC RDPS forecast (10 km, North America, via MSC Datamart GRIB2)
+  protocol: http
+  base_url: https://dd.weather.gc.ca/today
+  resolution_deg: 0.09
+  grid: projected           # 10 km rotated lat-lon (rotated_ll), 2-D lat/lon
+  auth: anonymous
+  bbox: [-152.0, 18.0, -40.0, 87.0]
+  temporal_resolution: hourly
+  license: "Environment and Climate Change Canada Data Servers End-use Licence v2.1"
+  citation: "Environment and Climate Change Canada (ECCC/MSC), RDPS."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # AirTemp_AGL-2m (camelCase dialect, identity K)
+    - specific_humidity                     # SpecificHumidity_AGL-2m
+    - surface_air_pressure                  # Pressure_Sfc
+    - eastward_wind                         # WindU_AGL-10m
+    - northward_wind                        # WindV_AGL-10m
+    - precipitation_flux                    # Precip-Accum1h_Sfc mm/h -> /3600 (1h bucket, no de-accum)
+    - surface_downwelling_shortwave_flux    # DownwardShortwave...-Accum_Sfc J/m2 run-total -> de-accum /3600 -> W/m2
+    - surface_downwelling_longwave_flux     # DownwardLongwave...-Accum_Sfc (same)
+  note: "Sibling of eccc_hrdps (same provider/licence/access model); 10 km rotated grid, hourly to +84h. NEW MSC camelCase variable dialect (AirTemp/WindU/...), NOT NCEP short names. Radiation is run-total accum (de-accum); precip from explicit 1h bucket. MSC Datamart latest-run-only (today/, no by-date archive). LIVE-VERIFIED 2026-06-18 (T2m 277-291 K, SWdown 139-954 W/m2, LWdown 236-353 W/m2, Psfc 77-92 kPa). Near-real-time forecast: NOT exposed in SYMFLUENCE DATASET_SPECS."
+  status: implemented
+  verified: true
+
+- slug: cfsv2
+  name: NCEP CFSv2/CDAS analysis (~0.5°, hourly, global, via S3 GRIB2)
+  protocol: http
+  base_url: https://noaa-cfs-pds.s3.amazonaws.com
+  resolution_deg: 0.5
+  grid: regular            # Gaussian ~0.5°, 0-360 longitude, normalized on subset
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: hourly
+  license: "U.S. Government work / NOAA Open Data (public domain)"
+  citation: "Saha et al. (2014), The NCEP Climate Forecast System Version 2, J. Climate 27:2185-2208."
+  products: 1
+  canonical_variables:
+    - air_temperature                       # TMP 2 m (identity, K)
+    - specific_humidity                     # SPFH 2 m
+    - surface_air_pressure                  # PRES surface
+    - eastward_wind                         # UGRD 10 m
+    - northward_wind                        # VGRD 10 m
+    - precipitation_flux                    # PRATE surface (flux, identity, absent at f00)
+    - surface_downwelling_shortwave_flux    # DSWRF surface (fcst-avg, absent at f00)
+    - surface_downwelling_longwave_flux     # DLWRF surface (fcst-avg, absent at f00)
+  note: "Clones the gfs Herbie .idx byte-range pattern against noaa-cfs-pds (cdas.YYYYMMDD/cdas1.tHHz.sfluxgrbf{00-09}.grib2). This is the CDAS real-time ANALYSIS stream that extends CFSR, NOT the 9-month seasonal forecast (that lives on NOMADS/RDA). Cycle = most recent 00/06/12/18Z <= start; leads f00-f09. All identity SI. Bucket history begins 2023-04-22."
+  status: implemented
+  verified: false
+
 - slug: gfs
   name: NOAA GFS atmospheric forecast (0.25°, hourly, global, via S3 GRIB2)
   protocol: http

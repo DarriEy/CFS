@@ -126,6 +126,7 @@ _FORCING_POSTURE: dict[str, tuple[str, str, str]] = {
     "CASR": ("attribution", "ECCC-Data-Servers-End-use-Licence-2.1", "Environment and Climate Change Canada"),
     # Posture-only expansion tier (verified, open/attribution):
     "GFS": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA Global Forecast System"),
+    "CFSV2": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA NCEP Climate Forecast System v2 / CDAS"),
     "NARR": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA North American Regional Reanalysis"),
     "NAM": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA North American Mesoscale model"),
     "RAP": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA Rapid Refresh"),
@@ -133,11 +134,30 @@ _FORCING_POSTURE: dict[str, tuple[str, str, str]] = {
     "PERSIANN-CDR": ("open", "US-Public-Domain-NOAA-NCEI", "NOAA NCEI / UC Irvine CHRS PERSIANN-CDR"),
     "GRIDMET": ("open", "CC0-1.0", "University of Idaho gridMET (Abatzoglou)"),
     "CHIRPS": ("open", "CC-BY-4.0", "UCSB Climate Hazards Center (CHIRPS)"),
+    "LIVNEH": ("open", "US-Public-Domain", "NOAA PSL / Livneh et al. (2015)"),
+    "TERRACLIMATE": ("open", "CC0-1.0", "University of Idaho TerraClimate (Abatzoglou et al.)"),
+    "MRMS": ("open", "US-Public-Domain", "NOAA MRMS QPE"),
+    "W5E5": ("open", "CC0-1.0", "ISIMIP / W5E5 v2.0 (Lange et al.)"),
     "GLDAS": ("attribution", "CC0-1.0", "NASA Global Land Data Assimilation System"),
     "FLDAS": ("attribution", "CC0-1.0", "NASA Famine Early Warning LDAS"),
     "GPM": ("attribution", "CC0-1.0", "NASA GPM IMERG"),
     "MERRA2": ("attribution", "CC0-1.0", "NASA MERRA-2"),
     "ECMWF": ("attribution", "CC-BY-4.0", "ECMWF (IFS open data)"),
+    # AgERA5: CC-BY-4.0 since the 2025-07-02 Copernicus migration. Live-verified
+    # via CDS, but auth-gated + partial coverage, so kept out of DATASET_SPECS
+    # (like WFDE5) — the ungraded posture-only tier excludes auth-gated families.
+    "AGERA5": ("attribution", "CC-BY-4.0", "Copernicus Climate Change Service (C3S) AgERA5"),
+    # DWD ICON-EU open data (near-real-time only, no by-date archive); declared
+    # posture, not in DATASET_SPECS (like the ECCC forecast suite).
+    "ICON": ("attribution", "CC-BY-4.0", "Deutscher Wetterdienst (DWD)"),
+    # ECCC/MSC operational forecast suite (same end-use licence as RDRS/CASR).
+    # Near-real-time only (MSC Datamart keeps no by-date archive), so these carry
+    # a declared posture but are deliberately NOT in DATASET_SPECS — the community
+    # backend serves historical forcing windows the latest-run-only feed cannot
+    # satisfy (mirrors the gefs/nwm_operational deferral).
+    "HRDPS": ("attribution", "ECCC-Data-Servers-End-use-Licence-2.1", "Environment and Climate Change Canada"),
+    "RDPS": ("attribution", "ECCC-Data-Servers-End-use-Licence-2.1", "Environment and Climate Change Canada"),
+    "GEPS": ("attribution", "ECCC-Data-Servers-End-use-Licence-2.1", "Environment and Climate Change Canada"),
 }
 
 
@@ -643,6 +663,50 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         auth=frozenset(), temporal=None, spatial=None, parity=None,
         variables_key=None, native_to_canonical=None,
         notes="NOAA GFS 0.25deg global forecast (NODD anonymous). Recent forecast horizon only.",
+    ),
+    DatasetSpec(
+        family="CFSV2", dataset_ids=("CFSV2",), product="cfsv2:cdas_flux",
+        grid="regular_latlon",
+        variables=frozenset({"air_temperature", "specific_humidity", "surface_air_pressure",
+            "eastward_wind", "northward_wind", "precipitation_flux",
+            "surface_downwelling_shortwave_flux", "surface_downwelling_longwave_flux"}),
+        fetchable=frozenset({"air_temperature", "specific_humidity", "surface_air_pressure",
+            "eastward_wind", "northward_wind", "precipitation_flux",
+            "surface_downwelling_shortwave_flux", "surface_downwelling_longwave_flux"}),
+        auth=frozenset(), temporal=None, spatial=None, parity=None,
+        variables_key=None, native_to_canonical=None,
+        notes="NCEP CFSv2/CDAS ~0.5deg global analysis stream (NODD anonymous). Recent horizon only.",
+    ),
+    DatasetSpec(
+        family="W5E5", dataset_ids=("W5E5", "W5E5v2.0"), product="w5e5:obsclim_daily",
+        grid="regular_latlon",
+        variables=frozenset({"air_temperature", "specific_humidity", "surface_air_pressure",
+            "wind_speed", "precipitation_flux", "surface_downwelling_shortwave_flux",
+            "surface_downwelling_longwave_flux"}),
+        fetchable=frozenset({"air_temperature", "specific_humidity", "surface_air_pressure",
+            "wind_speed", "precipitation_flux", "surface_downwelling_shortwave_flux",
+            "surface_downwelling_longwave_flux"}),
+        auth=frozenset(), temporal=("1979-01-01", "2020-01-01"), spatial=None, parity=None,
+        variables_key=None, native_to_canonical=None,
+        notes="W5E5 v2.0 bias-corrected global 0.5deg daily (ISIMIP, CC0). Wind is scalar (wind_speed).",
+    ),
+    DatasetSpec(
+        family="LIVNEH", dataset_ids=("LIVNEH",), product="livneh:daily",
+        grid="regular_latlon",
+        variables=frozenset({"air_temperature", "precipitation_flux", "wind_speed"}),
+        fetchable=frozenset({"air_temperature", "precipitation_flux", "wind_speed"}),
+        auth=frozenset(), temporal=None, spatial=(-124.59, 25.16, -67.03, 52.84), parity=None,
+        variables_key=None, native_to_canonical=None,
+        notes="Livneh CONUS+ 1/16deg daily (NOAA PSL, US-PD). Partial: precip/air_temp/wind only.",
+    ),
+    DatasetSpec(
+        family="MRMS", dataset_ids=("MRMS", "MRMS_QPE"), product="mrms:multisensor_qpe_01h",
+        grid="regular_latlon",
+        variables=frozenset({"precipitation_flux"}),
+        fetchable=frozenset({"precipitation_flux"}),
+        auth=frozenset(), temporal=None, spatial=(-130.0, 20.0, -60.0, 55.0), parity=None,
+        variables_key=None, native_to_canonical=None,
+        notes="NOAA MRMS MultiSensor QPE 1 km CONUS hourly (NODD, US-PD). Precip only; rolling ~5.6yr archive.",
     ),
     DatasetSpec(
         family="GLDAS", dataset_ids=("GLDAS",), product="gldas:noah025_3h",
