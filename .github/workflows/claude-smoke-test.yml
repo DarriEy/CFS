@@ -1,0 +1,29 @@
+name: Claude Smoke Test
+
+# Verifies the ANTHROPIC_API_KEY secret + claude-code-action wiring.
+# Lives only on the chore/claude-smoke-test branch; safe to delete once verified.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            This is a connectivity smoke test. Do not modify any files.
+            Reply with exactly one line: "SMOKE TEST OK" followed by the
+            name of the repository you are running in.
+          claude_args: |
+            --max-turns 2
+            --allowedTools Read
