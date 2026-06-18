@@ -29,6 +29,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   E-OBS / MSWEP / NA-CORDEX (non-commercial). Verification deferred (auth-gated):
   WFDE5 / BARRA2 / EM-Earth. `tests/test_forcing_expansion_verified_network.py`
   is the standing live-verification evidence.
+- **Forcing-source expansion — new connectors** (license posture verified against
+  primary sources 2026-06-18; see `docs/forcing-expansion-candidates.md`):
+  - **Live forecasting:** `cfsv2` (NCEP CFSv2/CDAS ~0.5° global analysis stream,
+    anonymous S3 GRIB2 `.idx` byte-range, reuses the `gfs` protocol — exposed in
+    `DATASET_SPECS`); `eccc_hrdps` (2.5 km continental) and `eccc_rdps` (10 km
+    regional) Canadian forecasts plus `eccc_geps` (0.5° 20-member ensemble mean)
+    via the MSC Datamart (anonymous GRIB2, ECCC End-use Licence v2.1, same family
+    as `rdrs`); and `dwd_icon` (DWD ICON-EU ~6.5 km regular lat-lon, anonymous
+    bzip2 GRIB2, CC-BY-4.0). The forecast connectors are near-real-time (the
+    upstream feeds keep only the latest runs, no by-date archive), so they carry
+    a declared posture but are **not** in `DATASET_SPECS`.
+  - **Historical / reanalysis:** `w5e5` (W5E5 v2.0 bias-corrected global 0.5°
+    daily, CC0, ISIMIP byte-range + h5netcdf — exposed); `agera5` (C3S AgERA5
+    daily agromet indicators via CDS, CC-BY-4.0, partial coverage, live-verified
+    but auth-gated so kept out of `DATASET_SPECS` like `wfde5`); `livneh` (CONUS+ 1/16° daily,
+    NOAA PSL OPeNDAP, US public domain, partial — exposed); `terraclimate`
+    (global monthly water balance, CC0, THREDDS OPeNDAP — posture-declared,
+    monthly cadence kept out of `DATASET_SPECS`).
+  - **Precipitation:** `mrms` (NOAA MRMS MultiSensor QPE 1 km CONUS hourly,
+    anonymous S3 gzip-GRIB2, US public domain, precip-only — exposed).
+  - Each connector ships an offline test; all ten (`cfsv2`, `eccc_hrdps`,
+    `eccc_rdps`, `eccc_geps`, `dwd_icon`, `w5e5`, `agera5`, `livneh`,
+    `terraclimate`, `mrms`) were live round-trip verified — `agera5` via a
+    credentialed CDS request, the rest anonymously. Posture is recorded in
+    `_FORCING_POSTURE` and the catalogue in `inventory/providers.yaml`.
+- **Two recently-changed upstream facts captured** (flagged in
+  `docs/forcing-expansion-candidates.md`): the Copernicus CDS/ADS license became
+  CC-BY-4.0 on 2025-07-02, and the legacy CDS/ADS were decommissioned 2024-09-26
+  onto the new Common Data Store Engine (the new `~/.cdsapirc` has no UID field —
+  the token is `<UID>:<APIKEY>` in `key`), affecting all CDS connectors.
 
 ### Fixed
 
