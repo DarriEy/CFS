@@ -18,9 +18,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Trim whitespace from token (masked, never printed)
+        env:
+          RAW_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          TRIMMED="$(printf '%s' "$RAW_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$TRIMMED"
+          echo "OAUTH_TRIMMED=$TRIMMED" >> "$GITHUB_ENV"
+          echo "raw len: ${#RAW_TOKEN}, trimmed len: ${#TRIMMED}, prefix: ${TRIMMED:0:11}"
+
       - uses: anthropics/claude-code-action@v1
         with:
-          claude_code_oauth_token: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ env.OAUTH_TRIMMED }}
           github_token: ${{ github.token }}
           show_full_output: "true"
           prompt: |
@@ -28,7 +37,6 @@ jobs:
             Reply with exactly one line: "SMOKE TEST OK" followed by the
             name of the repository you are running in.
           claude_args: |
-            --debug
             --model claude-sonnet-4-6
             --max-turns 2
             --allowedTools Read
