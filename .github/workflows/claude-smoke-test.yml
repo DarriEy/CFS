@@ -1,0 +1,32 @@
+name: Claude Smoke Test
+
+# Verifies the subscription OAuth token via claude_code_oauth_token.
+# Lives only on the chore/claude-smoke-test branch; safe to delete once verified.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            This is a connectivity smoke test. Do not modify any files.
+            Reply with exactly one line: "SMOKE TEST OK" followed by the
+            name of the repository you are running in.
+          claude_args: |
+            --model claude-sonnet-4-6
+            --max-turns 2
+            --allowedTools Read
