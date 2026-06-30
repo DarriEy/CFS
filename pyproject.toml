@@ -153,3 +153,10 @@ ignore_missing_imports = true
 module = "zarr.*"
 follow_imports = "skip"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# numpy ≥2.2 ships .pyi stubs that use PEP 695 type-parameter syntax, which mypy
+# cannot parse under python_version = 3.11 — don't follow imports into it.
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
