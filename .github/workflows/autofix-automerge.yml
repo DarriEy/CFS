@@ -1,8 +1,11 @@
 name: Autofix Auto-Merge
 
-# When CI passes on a claude/autofix/* branch, squash-merge the fix PR — but only
-# if it is labeled automerge-on-green (drift fixes) and NOT needs-human-review
-# (contract changes). This is the "merge when CI greens" half of the triage system.
+# When CI passes on a claude/autofix/* branch, squash-merge the fix PR — but only if:
+#   1. it is labeled automerge-on-green and NOT needs-human-review, AND
+#   2. every changed file is under src/<svc>/connectors/ or tests/ (deterministic scope
+#      gate — blocks a misclassified non-connector fix from auto-merging regardless of
+#      how the triage agent labeled it).
+# This is the "merge when CI greens" half of the triage system.
 
 on:
   workflow_run:
@@ -37,9 +40,24 @@ jobs:
           has_automerge=$(echo "$labels" | jq -r 'index("automerge-on-green") // empty')
           has_human=$(echo "$labels"     | jq -r 'index("needs-human-review") // empty')
 
-          if [ -n "$has_automerge" ] && [ -z "$has_human" ]; then
-            echo "PR #$number is drift-eligible and green — squash-merging."
-            gh pr merge -R "$REPO" "$number" --squash --delete-branch
-          else
-            echo "PR #$number not eligible for auto-merge (labels: $labels) — leaving for a human."
+          if [ -z "$has_automerge" ] || [ -n "$has_human" ]; then
+            echo "PR #$number not label-eligible for auto-merge (labels: $labels) — leaving for a human."
+            exit 0
           fi
+
+          # Deterministic scope gate: every changed file must be a connector or a test.
+          files=$(gh pr diff -R "$REPO" "$number" --name-only)
+          echo "Changed files:"; echo "$files"
+          out_of_scope=$(echo "$files" | grep -vE '^(src/[^/]+/connectors/|tests/)' || true)
+          if [ -n "$out_of_scope" ]; then
+            echo "PR #$number changes files outside connectors/ or tests/ — refusing auto-merge:"
+            echo "$out_of_scope"
+            gh pr edit -R "$REPO" "$number" \
+              --remove-label automerge-on-green --add-label needs-human-review 2>/dev/null || true
+            gh pr comment -R "$REPO" "$number" --body \
+              "🤖 Auto-merge blocked: this PR changes files outside \`connectors/\`/\`tests/\`, which is out of scope for an adapter/data-drift autofix. Relabeled \`needs-human-review\` for a human to evaluate."
+            exit 0
+          fi
+
+          echo "PR #$number is drift-eligible, in scope, and green — squash-merging."
+          gh pr merge -R "$REPO" "$number" --squash --delete-branch
