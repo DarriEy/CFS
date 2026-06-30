@@ -27,5 +27,6 @@ jobs:
             Reply with exactly one line: "SMOKE TEST OK" followed by the
             name of the repository you are running in.
           claude_args: |
+            --model claude-sonnet-4-6
             --max-turns 2
             --allowedTools Read
