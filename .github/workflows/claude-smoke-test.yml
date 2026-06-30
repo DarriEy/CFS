@@ -22,6 +22,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
+          show_full_output: "true"
           prompt: |
             This is a connectivity smoke test. Do not modify any files.
             Reply with exactly one line: "SMOKE TEST OK" followed by the
