@@ -123,7 +123,7 @@ markers = [
 # bundled stubs use (it rejects that syntax under a <3.12 target, which broke the
 # 3.12/3.13 CI legs). Runtime support stays at >=3.11; the codebase itself uses
 # no 3.12-only syntax.
-python_version = "3.12"
+python_version = "3.11"
 warn_return_any = true
 disallow_untyped_defs = false
 check_untyped_defs = true
