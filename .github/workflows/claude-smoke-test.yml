@@ -20,9 +20,11 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          echo "key length: ${#ANTHROPIC_API_KEY}, prefix: ${ANTHROPIC_API_KEY:0:7}..."
+          echo "raw key length: ${#ANTHROPIC_API_KEY}, prefix: ${ANTHROPIC_API_KEY:0:7}..."
+          TRIMMED="$(printf '%s' "$ANTHROPIC_API_KEY" | tr -d '[:space:]')"
+          echo "trimmed key length: ${#TRIMMED}"
           code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "x-api-key: $TRIMMED" \
             -H "anthropic-version: 2023-06-01" \
             -H "content-type: application/json" \
             -d '{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}')
