@@ -21,6 +21,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
           prompt: |
             This is a connectivity smoke test. Do not modify any files.
             Reply with exactly one line: "SMOKE TEST OK" followed by the
