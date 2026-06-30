@@ -1,0 +1,45 @@
+name: Autofix Auto-Merge
+
+# When CI passes on a claude/autofix/* branch, squash-merge the fix PR — but only
+# if it is labeled automerge-on-green (drift fixes) and NOT needs-human-review
+# (contract changes). This is the "merge when CI greens" half of the triage system.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          startsWith(github.event.workflow_run.head_branch, 'claude/autofix/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge eligible drift PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list -R "$REPO" --head "$BRANCH" --state open \
+                 --json number,labels --jq '.[0]')
+          if [ -z "$pr" ] || [ "$pr" = "null" ]; then
+            echo "No open PR for $BRANCH — nothing to merge."; exit 0
+          fi
+          number=$(echo "$pr" | jq -r '.number')
+          labels=$(echo "$pr" | jq -r '[.labels[].name]')
+          has_automerge=$(echo "$labels" | jq -r 'index("automerge-on-green") // empty')
+          has_human=$(echo "$labels"     | jq -r 'index("needs-human-review") // empty')
+
+          if [ -n "$has_automerge" ] && [ -z "$has_human" ]; then
+            echo "PR #$number is drift-eligible and green — squash-merging."
+            gh pr merge -R "$REPO" "$number" --squash --delete-branch
+          else
+            echo "PR #$number not eligible for auto-merge (labels: $labels) — leaving for a human."
+          fi
