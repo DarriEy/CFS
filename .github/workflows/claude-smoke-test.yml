@@ -20,7 +20,7 @@ jobs:
 
       - name: Trim whitespace from token (masked, never printed)
         env:
-          RAW_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
+          RAW_TOKEN: ${{ secrets.ANTHROPIC_API_KEY_OAUTH }}
         run: |
           TRIMMED="$(printf '%s' "$RAW_TOKEN" | tr -d '[:space:]')"
           echo "::add-mask::$TRIMMED"
