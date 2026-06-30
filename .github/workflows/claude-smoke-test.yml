@@ -16,17 +16,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ github.token }}
-          prompt: |
-            This is a connectivity smoke test. Do not modify any files.
-            Reply with exactly one line: "SMOKE TEST OK" followed by the
-            name of the repository you are running in.
-          claude_args: |
-            --model claude-sonnet-4-6
-            --max-turns 2
-            --allowedTools Read
+      - name: Probe Anthropic API key (no secret is printed)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "key length: ${#ANTHROPIC_API_KEY}, prefix: ${ANTHROPIC_API_KEY:0:7}..."
+          code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d '{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}')
+          echo "HTTP status: $code"
+          echo "--- response body ---"
+          cat /tmp/resp.json
+          echo
+          test "$code" = "200"
