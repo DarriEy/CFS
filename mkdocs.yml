@@ -39,6 +39,7 @@ nav:
   - Provider Catalog: catalog.md
   - Canonical Schema (canonical-v1): canonical-v1.md
   - SYMFLUENCE Integration: symfluence.md
+  - Release Verification: release-verification.md
   - API Reference: reference.md
 
 markdown_extensions:

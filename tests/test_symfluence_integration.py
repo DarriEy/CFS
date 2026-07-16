@@ -448,6 +448,30 @@ class TestCapabilities:
 
 
 class TestAcquire:
+    @pytest.mark.network
+    def test_live_cube_to_manifest_smoke(self, tmp_path):
+        """Real CFS cube traverses the SYMFLUENCE backend and manifest seam."""
+        pytest.importorskip("symfluence")
+        xr = pytest.importorskip("xarray")
+        from symfluence.data.backends.contract import MANIFEST_FILENAME, read_manifest
+
+        backend = _backend(tmp_path)
+        request = _request(
+            tmp_path,
+            bbox=(50.7, -114.5, 51.1, -114.0),
+            window=("2015-06-01 00:00", "2015-06-01 02:00"),
+        )
+        result = backend.acquire(request)
+
+        manifest = read_manifest(request.target_dir / MANIFEST_FILENAME)
+        assert manifest["schema"] == "canonical-v1"
+        assert manifest["backend"] == "community"
+        assert manifest["paths"] == [str(result.paths[0])]
+        with xr.open_dataset(result.paths[0]) as cube:
+            assert cube.attrs["cfs_schema"] == "canonical-v1"
+            assert cube.sizes["time"] == 3
+            assert {"air_temperature", "precipitation_flux"} <= set(cube.data_vars)
+
     def test_acquire_writes_canonical_netcdf_and_manifest(self, tmp_path, monkeypatch):
         pytest.importorskip("symfluence")
         xr = pytest.importorskip("xarray")

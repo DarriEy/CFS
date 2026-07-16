@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-16
+
+### Added
+
+- **Historical CFSR companion** (`cfsr:hourly_timeseries`): all eight canonical
+  forcing fields from NCAR GDEX d093001 monthly parameter time-series via
+  THREDDS OPeNDAP, covering 1979–2010 on the native T382 Gaussian grid. A live
+  canonical subset was verified against the archive on 2026-07-16.
+- **Generated provider catalog and drift gate**: `inventory/providers.yaml` is
+  the single source for provider counts and the public connector table;
+  `scripts/generate_catalog.py` plus CI tests reject registry/inventory/docs
+  divergence.
+- **Release verification matrix** and a live CFS→SYMFLUENCE cube/manifest smoke
+  test. On 2026-07-16 (Python 3.12), the representative anonymous run passed
+  ERA5 ARCO, CHIRPS, RDRS, and CONUS404; ECMWF IFS/AIFS/ENS reached AWS but was
+  rate-limited with HTTP 503 `Slow Down`.
+
+### Changed
+
+- **EM-Earth deterministic access is anonymous by default** through FRDR HTTPS;
+  credential-gated S3 and pre-staged local files remain available explicitly.
+
 > The posture-only expansion tier requires SYMFLUENCE with the **posture-only
 > forcing gate** (acquisition contract 0.4.0). Against an older SYMFLUENCE those
 > ungraded datasets are declined and acquisition falls back to native — no
@@ -27,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data), NAM, RAP, NARR** (NOAA); **GLDAS, FLDAS, MERRA2, GPM IMERG** (NASA);
   **gridMET, nClimGrid-daily, PERSIANN-CDR, CHIRPS**. Excluded by licence:
   E-OBS / MSWEP / NA-CORDEX (non-commercial). Verification deferred (auth-gated):
-  WFDE5 / BARRA2 / EM-Earth. `tests/test_forcing_expansion_verified_network.py`
+  WFDE5 / BARRA2. `tests/test_forcing_expansion_verified_network.py`
   is the standing live-verification evidence.
 - **Forcing-source expansion — new connectors** (license posture verified against
   primary sources 2026-06-18; see `docs/forcing-expansion-candidates.md`):

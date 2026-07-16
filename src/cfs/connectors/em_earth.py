@@ -8,7 +8,7 @@ per-variable, per-month NetCDFs.
 
 Three access routes (``config={"source": ..., "data_dir": ...}``):
 
-1. **S3** (``source: "s3"``, default): the ``emearth`` bucket allows anonymous
+1. **S3** (``source: "s3"``): the ``emearth`` bucket allows anonymous
    *listing* but *denies anonymous GET* (every region, even requester-pays) —
    it needs AWS credentials. The connector defaults to anonymous and raises a
    clear error pointing at that; pass ``config={"anon": False}`` to use the
@@ -106,7 +106,7 @@ class EMEarthConnector(BaseForcingConnector):
         self.variant = cfg.get("variant", "deterministic")
         if self.variant not in VARIANTS:
             raise SubsetError(f"Unknown EM-Earth variant '{self.variant}' (deterministic/probabilistic)")
-        self.source = cfg.get("source", "s3")
+        self.source = cfg.get("source", "frdr" if self.variant == "deterministic" else "s3")
         if self.source not in SOURCES:
             raise SubsetError(f"Unknown EM-Earth source '{self.source}' (s3/frdr)")
         if self.source == "frdr" and self.variant != "deterministic":
@@ -140,8 +140,9 @@ class EMEarthConnector(BaseForcingConnector):
                 name=f"EM-Earth {self.variant} daily (0.1°, global)",
                 description=(
                     f"EM-Earth {self.variant} daily met (temperature, dewpoint, "
-                    "precipitation). AWS bucket is credential-gated; the FRDR "
-                    "archive serves anonymous per-file HTTPS (source='frdr')."
+                    "precipitation). The deterministic product defaults to the "
+                    "anonymous FRDR per-file HTTPS archive; S3 remains available "
+                    "with source='s3' and credentials."
                 ),
                 variables=[
                     ProductVariable(canonical=m.canonical, source_name=m.source_name)

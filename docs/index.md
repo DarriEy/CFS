@@ -1,6 +1,6 @@
 # CFS — Community Forcing Service
 
-**One asynchronous interface to 33 meteorological forcing products, returning a
+**One asynchronous interface to 46 meteorological forcing providers, returning a
 canonical, CF-aligned `xarray.Dataset`.**
 
 ## Statement of need
@@ -53,7 +53,7 @@ Those steps are model- and deployment-specific, so they stay in the consumer.
 
 ## Features
 
-- **33 connectors** spanning global and regional reanalyses (ERA5/ERA5-Land,
+- **47 connectors** spanning global and regional reanalyses (ERA5/ERA5-Land,
   MERRA-2, CARRA, CERRA, RDRS, BARRA2, CONUS404, NARR, WFDE5), analysis
   products (AORC, NLDAS, HRRR, NWM operational, Daymet, gridMET,
   nClimGrid-Daily, GLDAS, FLDAS), satellite/station precipitation and
@@ -91,6 +91,6 @@ Those steps are model- and deployment-specific, so they stay in the consumer.
 
 ## Naming note
 
-"CFS" also denotes NOAA's **Climate Forecast System** (CFSR/CFSv2), itself a
-forcing product. If a CFSR connector is ever added it will use a disambiguated
-slug (e.g. `cfsr`) to avoid collision with the service name.
+"CFS" also denotes NOAA's **Climate Forecast System**. Its historical CFSR and
+recent CFSv2/CDAS products use the disambiguated `cfsr` and `cfsv2` provider
+slugs to avoid collision with the service name.

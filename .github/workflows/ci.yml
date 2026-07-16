@@ -36,3 +36,6 @@ jobs:
 
       - name: Test (offline only — network tests need credentials/access)
         run: pytest tests/ -v --tb=short -m "not network" --cov=cfs --cov-report=term
+
+      - name: Verify generated provider catalog
+        run: python scripts/generate_catalog.py && git diff --exit-code

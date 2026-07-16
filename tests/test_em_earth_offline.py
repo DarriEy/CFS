@@ -36,7 +36,7 @@ def test_registered():
 def test_config_defaults_and_knobs(tmp_path):
     c = EMEarthConnector()
     assert c.anon is True and c.variant == "deterministic"
-    assert c.source == "s3" and c.data_dir is None
+    assert c.source == "frdr" and c.data_dir is None
     c2 = EMEarthConnector(config={"anon": False, "variant": "probabilistic"})
     assert c2.anon is False and c2.variant == "probabilistic"
     c3 = EMEarthConnector(config={"source": "frdr", "data_dir": str(tmp_path)})
@@ -93,7 +93,7 @@ def test_precip_mm_per_day():
 
 async def test_s3_fetch_path_no_precip_warning(monkeypatch):
     # The mm/day assumption is verified now — precip fetches carry no warning.
-    conn = EMEarthConnector()
+    conn = EMEarthConnector(config={"source": "s3"})
 
     class _FS:
         def cat_file(self, key):

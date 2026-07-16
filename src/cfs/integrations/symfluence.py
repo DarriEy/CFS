@@ -127,6 +127,7 @@ _FORCING_POSTURE: dict[str, tuple[str, str, str]] = {
     # Posture-only expansion tier (verified, open/attribution):
     "GFS": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA Global Forecast System"),
     "CFSV2": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA NCEP Climate Forecast System v2 / CDAS"),
+    "CFSR": ("attribution", "CC-BY-4.0-NCAR-GDEX", "NOAA NCEP CFSR / NSF NCAR GDEX"),
     "NARR": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA North American Regional Reanalysis"),
     "NAM": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA North American Mesoscale model"),
     "RAP": ("attribution", "US-Public-Domain-NOAA-NODD", "NOAA Rapid Refresh"),
@@ -663,6 +664,18 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         auth=frozenset(), temporal=None, spatial=None, parity=None,
         variables_key=None, native_to_canonical=None,
         notes="NOAA GFS 0.25deg global forecast (NODD anonymous). Recent forecast horizon only.",
+    ),
+    DatasetSpec(
+        family="CFSR", dataset_ids=("CFSR",), product="cfsr:hourly_timeseries",
+        grid="regular_latlon",
+        variables=_STANDARD_8,
+        fetchable=_STANDARD_8,
+        auth=frozenset(), temporal=("1979-01-01", "2011-01-01"), spatial=None, parity=None,
+        variables_key=None, native_to_canonical=None,
+        notes=(
+            "NCEP CFSR selected hourly surface time-series, 1979-2010 "
+            "(NCAR GDEX d093001, CC-BY-4.0). Historical companion to CFSv2/CDAS."
+        ),
     ),
     DatasetSpec(
         family="CFSV2", dataset_ids=("CFSV2",), product="cfsv2:cdas_flux",

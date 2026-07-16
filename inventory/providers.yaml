@@ -1,5 +1,5 @@
 # CFS Provider Inventory
-# Total providers: 36 — 34 live-verified + 2 offline/access-gated.
+# Total providers: 47 — 45 live-verified + 2 offline/access-gated.
 # Forecasts: gfs + gefs (NOAA global), hrrr:sfc_fcst (3km CONUS), rap (13km CONUS),
 # nam (12km NA + 3km CONUS nest), ecmwf_opendata (ECMWF IFS HRES + AIFS, global) —
 # all via GRIB2 byte-range + cfgrib (shared grib_idx helper). gefs de-buckets
@@ -610,12 +610,12 @@
     - "GloH2O flags a low-precipitation artifact over 2000-2015 in V3.15/V3.16 (V316 is the connector default); pin an earlier version via the 'version' config knob if that window matters"
 
 - slug: em_earth
-  name: EM-Earth (0.1° daily, global; AWS S3, credential-gated)
-  protocol: s3_direct
-  base_url: s3://emearth
+  name: EM-Earth (0.1° daily, global; anonymous FRDR HTTPS / optional S3)
+  protocol: http
+  base_url: https://www.frdr-dfdr.ca/repo/files/6/published/publication_542/submitted_data/EM_Earth_v1
   resolution_deg: 0.1
   grid: regular
-  auth: aws_credentials   # bucket allows anon LIST but DENIES anon GET (all regions)
+  auth: anonymous
   bbox: [-180.0, -90.0, 180.0, 90.0]
   temporal_resolution: daily
   variant: "config knob deterministic(default)/probabilistic; anon config (default True)"
@@ -627,11 +627,11 @@
     - dewpoint_temperature  # tdew  C +273.15
     - precipitation_flux    # prcp ASSUMED mm/day /86400 -- UNVERIFIED (always warns)
   note: "BLOCKED for anon access (emearth bucket denies anon GET; needs AWS creds via config={'anon':False}). SYMFLUENCE's handler silently 403->'no data'. Precip units UNVERIFIED (can't read a file; QC can't catch a precip unit error) -> explicit FetchResult warning every fetch. Temperature QC-protected. Built credential-capable + clear RegistrationRequiredError on 403. NOT live-verifiable here."
-  status: implemented_blocked_access
-  verified: false
+  status: implemented
+  verified: true
   caveats:
     - "daily prcp units unverified (assumed mm/day); every precipitation fetch carries an explicit warning"
-    - "S3 bucket denies anonymous reads (listing only) — needs AWS credentials (config={'anon': False})"
+    - "Deterministic product defaults to anonymous FRDR HTTPS; optional S3 source needs AWS credentials"
 
 - slug: na_cordex
   name: NA-CORDEX (0.22°/0.44° daily, North America, via S3)
@@ -945,6 +945,31 @@
   status: implemented
   verified: true
 
+- slug: cfsr
+  name: NCEP CFSR selected hourly surface time-series (1979–2010, NCAR GDEX)
+  protocol: opendap
+  base_url: https://tds.gdex.ucar.edu/thredds/dodsC/files/g/d093001
+  resolution_deg: 0.3125
+  grid: regular
+  auth: anonymous
+  bbox: [-180.0, -90.0, 180.0, 90.0]
+  temporal_resolution: hourly
+  license: "NCAR GDEX CC-BY-4.0"
+  citation: "Saha et al. (2010), CFSR, BAMS 91:1015–1057; NCAR GDEX d093001."
+  products: 1
+  canonical_variables:
+    - air_temperature
+    - specific_humidity
+    - surface_air_pressure
+    - eastward_wind
+    - northward_wind
+    - precipitation_flux
+    - surface_downwelling_shortwave_flux
+    - surface_downwelling_longwave_flux
+  note: "Historical companion to cfsv2. Monthly GRIB2 parameter time-series exposed by NCAR GDEX THREDDS OPeNDAP; server-side bbox/time slicing avoids whole 70-300 MB variable-month downloads. Native T382 Gaussian ~0.3125° grid. Coverage 1979-01 through 2010-12."
+  status: implemented
+  verified: true
+
 - slug: cfsv2
   name: NCEP CFSv2/CDAS analysis (~0.5°, hourly, global, via S3 GRIB2)
   protocol: http
@@ -1070,6 +1095,9 @@
     - surface_downwelling_longwave_flux     # DLWRF surface (instantaneous)
     - precipitation_flux                    # APCP de-accumulated (12h-reset-aware)
   note: "Herbie-style: .idx byte-range + cfgrib (forecast extra), shared grib_idx helper. TWO products, both 2-D LCC. awphys_fcst: 12km North America (grid 218), leads HOURLY to f36 then 3-HOURLY to f84; PRECIP via APCP de-accumulation (no PRATE) whose reference RESETS every 12h (ref=12*floor((N-1)/12)) — the connector selects the run-total APCP by its forecast-window string and de-accumulates per step (inc=runtotal at a reset boundary, else runtotal(N)-runtotal(N-step)), /(step*3600)->flux. conusnest_fcst: 3km CONUS nest, hourly to f60, ALL-instantaneous identity SI incl. an instantaneous PRATE flux (the nest also ships ave/max variants, so the instantaneous message is pinned by its '{lead} hour fcst' window). Both: most recent 00/06/12/18Z cycle <= start (no f00 forcing). NOTE: NAM packs 10m U+V in ONE GRIB message (shared .idx offset) — handled via grib_idx skip-co-located byte ranges + open_message prefer= component selection (shared with RAP). LIVE-VERIFIED (2026-06): awphys precip de-accum closed-loop EXACT vs NAM's 3-6h bucket + 12-13h boundary; winds eastward==u10/northward==v10 (not swapped); conusnest multi-lead winds+precip+SW."
+  status: implemented
+  verified: true
+
 - slug: ecmwf_opendata
   name: ECMWF open-data IFS HRES + AIFS + ENS forecast (0.25°, global, via AWS GRIB2)
   protocol: http

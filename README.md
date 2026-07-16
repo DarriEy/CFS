@@ -7,7 +7,7 @@ Acquiring forcing for a modeling study traditionally means bespoke scripting
 per product — every product has its own API, native variable names, units,
 accumulation conventions, and grid, and the accumulation-to-rate conversion is
 re-implemented (and mis-implemented) in every group's scripts. CFS replaces
-that with **one async interface over 33 products** that stops at a canonical,
+that with **one async interface over 46 providers** that stops at a canonical,
 CF-aligned `xarray.Dataset` — deliberately leaving catchment/HRU remapping and
 model-specific file formats to modeling frameworks (e.g. SYMFLUENCE).
 
@@ -121,9 +121,7 @@ names → canonical vars + linear unit conversions, and decorate with
 
 ## Providers
 
-33 connectors — 31 live-verified against their upstream stores (19 anonymous +
-12 auth-gated, confirmed with real CDS and Earthdata credentials); `mswep` and
-`em_earth` are offline-verified pending access/credentials. Highlights:
+46 connectors — 43 live-verified against their upstream stores; 3 remain offline or access-blocked. Highlights:
 
 | | products |
 |---|---|
@@ -204,6 +202,6 @@ Labels: `claude-autofix` (agent-opened) · `automerge-on-green` (drift fix, self
 
 ## Naming note
 
-"CFS" also denotes NOAA's **Climate Forecast System** (CFSR/CFSv2), itself a
-forcing product. If a CFSR connector is ever added it must use a disambiguated
-slug (e.g. `cfsr`) to avoid collision with the service name.
+"CFS" also denotes NOAA's **Climate Forecast System**. Its historical CFSR and
+recent CFSv2/CDAS products use the disambiguated `cfsr` and `cfsv2` provider
+slugs to avoid collision with the service name.

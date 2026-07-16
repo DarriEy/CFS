@@ -1,8 +1,6 @@
 # Provider Catalog
 
-CFS ships **33 connectors** — 31 live-verified against their upstream stores
-(the auth-gated ones with real CDS and Earthdata credentials), 2
-offline-verified pending access or provider-specific credentials.
+CFS ships **46 connectors** — 43 live-verified against their upstream stores and 3 offline or access-blocked. Counts and the table below are generated from `inventory/providers.yaml`.
 
 The machine-readable catalog (resolution, bbox, license, citation, canonical
 variables, caveats) is committed at
@@ -17,41 +15,57 @@ and the registry is discoverable at runtime (`cfs providers`,
 
 ## Connectors
 
+<!-- BEGIN GENERATED PROVIDER TABLE -->
 | slug | product | grid | access | auth | verified |
 |------|---------|------|--------|------|----------|
-| `era5_arco` | ECMWF ERA5 (0.25°, hourly) | regular | GCS Zarr | anonymous | live |
-| `aorc` | NOAA AORC v1.1 (1 km, hourly) | regular | S3 Zarr | anonymous | live |
-| `aorc_nwm` | NOAA AORC v1.1 NWM-projected (1 km) | 2-D LCC | S3 Zarr | anonymous | live |
-| `nwm_operational` | NOAA NWM operational forcing (1 km, hourly, real-time) | 2-D LCC | S3 NetCDF | anonymous | live |
-| `gfs` | NOAA GFS atmospheric **forecast** (0.25°, hourly, global) | regular | S3 GRIB2 (byte-range) | anonymous | live |
-| `gefs` | NOAA GEFS **ensemble forecast** (0.25°, 3-hourly, global) | regular | S3 GRIB2 (byte-range) | anonymous | live |
-| `chirps` | CHIRPS v2.0 daily precip (0.05°) | regular | HTTP NetCDF | anonymous | live |
-| `chirts` | CHIRTS daily temperature (0.05°, global tropics) | regular | HTTP NetCDF | anonymous | live |
-| `persiann_cdr` | PERSIANN-CDR daily satellite precip (0.25°, 1983–) | regular | HTTP NetCDF | anonymous | live |
-| `rdrs` | RDRS / CaSR v3.2 (Canada, ~10 km, hourly) | 2-D rotated pole | OPeNDAP | anonymous | live |
-| `barra2` | BoM BARRA-R2 (Australia, ~12 km, hourly) | regular | NCI THREDDS ncss | anonymous | live |
-| `conus404` | CONUS404 (4 km WRF, hourly) | 2-D LCC | OSN Zarr | anonymous | live |
-| `hrrr` | NOAA HRRR analysis + forecast (3 km) | 2-D LCC | hrrrzarr S3 | anonymous | live |
-| `era5_land` | ECMWF ERA5-Land (0.1°, hourly) | regular | CDS API | CDS | live (creds) |
-| `era5_cds` | ECMWF ERA5 reanalysis (0.25°, hourly) | regular | CDS API | CDS | live (creds) |
-| `wfde5` | WFDE5 bias-corrected ERA5 forcing (0.5°, hourly) | regular | CDS API | CDS | live (creds) |
-| `carra` | Copernicus Arctic Regional Reanalysis (2.5 km) | regular (interp.) | CDS API | CDS | live (creds) |
-| `cerra` | Copernicus European Regional Reanalysis (5.5 km) | regular (interp.) | CDS API | CDS | live (creds) |
-| `eobs` | E-OBS European gridded **observations** (0.1°/0.25° daily) | regular | CDS API | CDS | live (creds) |
-| `merra2` | NASA MERRA-2 (0.5°×0.625°, hourly) | regular | OPeNDAP | Earthdata | live (creds) |
-| `nldas` | NLDAS-2 (0.125°, hourly, CONUS) | regular | OPeNDAP | Earthdata | live (creds) |
-| `gpm` | GPM IMERG Daily precip (Final/Early/Late) | regular | OPeNDAP | Earthdata | live (creds) |
-| `cmorph` | NOAA CPC CMORPH CDR daily precip (0.25°) | regular | HTTP tar NetCDF | anonymous | live |
-| `daymet` | Daymet V4R1 (1 km daily, N. America) | 2-D LCC (x/y) | OPeNDAP | Earthdata | live (creds) |
-| `gldas` | NASA GLDAS-2 Noah (0.25°, 3-hourly, global land) | regular | OPeNDAP | Earthdata | live (creds) |
-| `fldas` | NASA FLDAS Noah (0.1°, **monthly**, global/Africa land) | regular | OPeNDAP | Earthdata | live (creds) |
-| `nex_gddp` | NEX-GDDP-CMIP6 (0.25° daily **projections**) | regular | S3 NetCDF | anonymous | live |
-| `na_cordex` | NA-CORDEX (0.22°/0.44° daily **projections**, N. America) | regular | S3 Zarr | anonymous | live |
-| `gridmet` | gridMET daily CONUS surface meteorology (~4 km) | regular | OPeNDAP | anonymous | live |
-| `nclimgrid_daily` | NOAA nClimGrid-Daily (5 km, CONUS) | regular | OPeNDAP | anonymous | live |
-| `narr` | NOAA NARR daily monolevel fields (32 km) | 2-D LCC | OPeNDAP | anonymous | live |
-| `mswep` | MSWEP precipitation (0.1°, daily/3-hourly) | regular | rclone / GDrive | Drive access | offline |
-| `em_earth` | EM-Earth (0.1° daily, global) | regular | S3 / FRDR HTTPS / local staging | AWS credentials (S3) or anonymous (FRDR) | live |
+| `era5_arco` | ECMWF ERA5 (ARCO / Google Cloud) | regular | zarr | anonymous | live |
+| `aorc` | NOAA AORC v1.1 (1 km, hourly) | regular | zarr | anonymous | live |
+| `aorc_nwm` | NOAA AORC v1.1 NWM-Projected (1 km, hourly) | lcc_2d | zarr | anonymous | live |
+| `chirps` | CHIRPS v2.0 daily precipitation (0.05°) | regular | http | anonymous | live |
+| `era5_land` | ECMWF ERA5-Land (0.1°, hourly, via CDS) | regular | cds_api | cds_api | live (creds) |
+| `era5_cds` | ECMWF ERA5 (0.25°, hourly, via CDS) | regular | cds_api | cds_api | live (creds) |
+| `wfde5` | WFDE5 bias-corrected ERA5 forcing (0.5°, hourly, via CDS) | regular | cds_api | cds_api | live (creds) |
+| `carra` | CARRA — Copernicus Arctic Regional Reanalysis (2.5 km, via CDS) | regular | cds_api | cds_api | live (creds) |
+| `cerra` | CERRA — Copernicus European Regional Reanalysis (5.5 km, via CDS) | regular | cds_api | cds_api | live (creds) |
+| `merra2` | NASA MERRA-2 (0.5°×0.625°, hourly, via OPeNDAP) | regular | opendap | earthdata | live (creds) |
+| `nldas` | NLDAS-2 (0.125°, hourly, via OPeNDAP) | regular | opendap | earthdata | live (creds) |
+| `gpm` | GPM IMERG Daily precipitation (0.1°, via OPeNDAP) | regular | opendap | earthdata | live (creds) |
+| `cmorph` | NOAA CPC CMORPH CDR daily precipitation (0.25°) | regular | http | anonymous | live |
+| `gldas` | NASA GLDAS-2 Noah (0.25°, 3-hourly, global land) | regular | opendap | earthdata | live (creds) |
+| `daymet` | Daymet V4R1 (1 km daily, North America, via OPeNDAP) | lcc_xy | opendap | earthdata | live (creds) |
+| `rdrs` | RDRS / CaSR v3.2 (Canadian Surface Reanalysis, ~10 km, hourly) | rotated_pole_2d | opendap | anonymous | live |
+| `conus404` | CONUS404 (4 km WRF reanalysis, hourly) | lcc_2d | zarr | anonymous | live |
+| `hrrr` | NOAA HRRR (3 km, hourly) | lcc_2d | zarr | anonymous | live |
+| `gridmet` | gridMET daily CONUS surface meteorology (~4 km) | regular | opendap | anonymous | live |
+| `nclimgrid_daily` | NOAA nClimGrid-Daily (5 km, CONUS) | regular | opendap | anonymous | live |
+| `narr` | NOAA NARR daily monolevel fields (32 km) | lcc_2d | opendap | anonymous | live |
+| `barra2` | BoM BARRA-R2 (Australian Regional Reanalysis v2, ~12 km, hourly) | regular | rest | anonymous | live |
+| `eobs` | E-OBS European gridded observations (0.1°/0.25° daily, via CDS) | regular | cds_api | cds_api | live (creds) |
+| `nex_gddp` | NASA NEX-GDDP-CMIP6 (0.25° daily downscaled CMIP6 projections) | regular | s3_direct | anonymous | live |
+| `mswep` | MSWEP (Multi-Source Weighted-Ensemble Precipitation, 0.1°) | regular | rclone | rclone_gdrive | offline |
+| `em_earth` | EM-Earth (0.1° daily, global; anonymous FRDR HTTPS / optional S3) | regular | http | anonymous | live |
+| `na_cordex` | NA-CORDEX (0.22°/0.44° daily, North America, via S3) | regular | zarr | anonymous | live |
+| `nwm_operational` | NWM Operational Forcing (1 km, hourly, via S3) | lcc_2d | s3_direct | anonymous | live |
+| `chirts` | CHIRTS daily temperature (0.05°, global tropics, via HTTP) | regular | http | anonymous | live |
+| `persiann_cdr` | PERSIANN-CDR daily satellite precipitation (0.25°, via HTTP) | regular | http | anonymous | live |
+| `fldas` | NASA FLDAS Noah (0.1° monthly, global/Africa land, via OPeNDAP) | regular | opendap | earthdata | live (creds) |
+| `w5e5` | W5E5 v2.0 bias-corrected forcing (0.5°, daily, global, via ISIMIP byte-range) | regular | http | anonymous | live |
+| `mrms` | NOAA MRMS MultiSensor QPE (1 km, hourly, CONUS; precip only, via S3 GRIB2) | regular | http | anonymous | live |
+| `terraclimate` | TerraClimate global monthly climate & water balance (~4 km, via THREDDS OPeNDAP) | regular | opendap | anonymous | live |
+| `livneh` | Livneh CONUS daily gridded meteorology (1/16°, daily, via PSL OPeNDAP) | regular | opendap | anonymous | live |
+| `agera5` | AgERA5 agrometeorological indicators (0.1°, daily, global, via CDS) | regular | cds_api | cds | live (creds) |
+| `eccc_hrdps` | ECCC HRDPS forecast (2.5 km, continental North America, via MSC Datamart GRIB2) | projected | http | anonymous | live |
+| `dwd_icon` | DWD ICON-EU forecast (~6.5 km, Europe, regular lat-lon, via opendata.dwd.de GRIB2) | regular | http | anonymous | live |
+| `eccc_geps` | ECCC GEPS ensemble-mean forecast (0.5°, global, via MSC Datamart GRIB2) | regular | http | anonymous | live |
+| `eccc_rdps` | ECCC RDPS forecast (10 km, North America, via MSC Datamart GRIB2) | projected | http | anonymous | live |
+| `cfsr` | NCEP CFSR selected hourly surface time-series (1979–2010, NCAR GDEX) | regular | opendap | anonymous | live |
+| `cfsv2` | NCEP CFSv2/CDAS analysis (~0.5°, hourly, global, via S3 GRIB2) | regular | http | anonymous | offline |
+| `gfs` | NOAA GFS atmospheric forecast (0.25°, hourly, global, via S3 GRIB2) | regular | http | anonymous | live |
+| `gefs` | NOAA GEFS ensemble forecast (0.25 select, 3-hourly, global, via S3 GRIB2) | regular | http | anonymous | live |
+| `rap` | NOAA RAP atmospheric forecast (13 km, hourly, CONUS, via S3 GRIB2) | lcc_2d | http | anonymous | live |
+| `nam` | NOAA NAM atmospheric forecast (12 km NA + 3 km CONUS nest, via S3 GRIB2) | lcc_2d | http | anonymous | live |
+| `ecmwf_opendata` | ECMWF open-data IFS HRES + AIFS + ENS forecast (0.25°, global, via AWS GRIB2) | regular | http | anonymous | live |
+<!-- END GENERATED PROVIDER TABLE -->
 
 "live" means a real fetch against the upstream store returned physical values;
 "live (creds)" the same, using real CDS or Earthdata credentials; "offline"
@@ -94,7 +108,7 @@ synthetic data but a live fetch is pending access (see the notes below).
        (`/tmp/parity-exp/validate_mswep_when_unblocked.sh`) to exercise the
        doc-fixed paths on both the CFS and SYMFLUENCE sides and record a
        parity grade.
-- **`em_earth`** — two sources. The default S3 bucket **denies anonymous
+- **`em_earth`** — two sources. The optional S3 source **denies anonymous
   reads** (allows listing only), so it needs AWS credentials
   (`config={"anon": False}`). The **FRDR route** (`config={"source":
   "frdr"}`) needs no credentials at all: FRDR's documented stable per-file
