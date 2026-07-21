@@ -43,10 +43,20 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, cast
+
+from cfs.integrations import _symfluence_helpers as _helpers
+from cfs.integrations._symfluence_specs import DatasetSpec, find_spec
 
 if TYPE_CHECKING:
     import xarray as xr
+
+_add_native_era5_derivations = _helpers.add_native_era5_derivations
+_as_list = _helpers.as_list
+_cfg = _helpers.config_value
+_derive_wind_speed = _helpers.derive_wind_speed
+_netcdf_encoding = _helpers.netcdf_encoding
+_product_tag = _helpers.product_tag
 
 # True only once this module has finished importing. The symfluence import
 # below triggers SYMFLUENCE's bootstrap; if THIS module was imported before
@@ -259,56 +269,6 @@ _DAYMET_TO_CANONICAL: dict[str, str] = {
 
 
 # ── The capability map ───────────────────────────────────────────────
-
-
-class DatasetSpec(NamedTuple):
-    """One dataset the community backend can serve.
-
-    Attributes:
-        family: Human-readable dataset family name (logs/errors/dispatch).
-        dataset_ids: Every framework name this dataset is requestable under —
-            each gets its own :class:`DatasetCapability` entry.
-        product: Fixed CFS product id, or ``None`` for NEX-GDDP (built per
-            scenario from the native config keys) and for the parallel-name
-            ``CFS`` entry (product comes from ``options['product']`` /
-            ``CFS_PRODUCT``).
-        grid: ``"regular_latlon"`` or ``"projected"`` (contract GridClass value).
-        variables: CFIF names servable (capability declaration).
-        fetchable: Canonical names the CFS product actually offers; requested
-            variables outside this set are satisfied by derivation
-            (``wind_speed``, ERA5 ``specific_humidity``) or dropped loudly.
-        auth: Auth-provider ids required (contract vocabulary).
-        temporal: Declared coverage ``[start, end)`` or ``None``.
-        spatial: Spatial domain ``(west, south, east, north)`` in degrees, or
-            ``None`` for (effectively) global products. Regional datasets
-            (CARRA is Arctic-only, CERRA Europe-only, HRRR CONUS-only, Daymet
-            North-America-only) refuse out-of-domain bboxes at ``acquire()``
-            time with a clear error: the limit is a property of the *dataset*,
-            not of this backend, so there is nothing to fall back to. (The
-            AcquisitionBackend contract has no spatial capability field yet,
-            so selection cannot decline on bbox; this is the minimal honest
-            check until it does.)
-        parity: Parity grade vs the native pipeline (``None`` = ungated; the
-            framework refuses ungated datasets unless ALLOW_UNGATED_BACKENDS).
-        variables_key: Legacy flat config key holding a native variable list.
-        native_to_canonical: Native variable name -> canonical-v1 map for
-            translating ``variables_key`` entries.
-        notes: Capability notes (shown to users by tooling).
-    """
-
-    family: str
-    dataset_ids: tuple[str, ...]
-    product: str | None
-    grid: str
-    variables: frozenset[str]
-    fetchable: frozenset[str]
-    auth: frozenset[str]
-    temporal: tuple[str, str] | None
-    spatial: tuple[float, float, float, float] | None
-    parity: str | None
-    variables_key: str | None
-    native_to_canonical: dict[str, str] | None
-    notes: str
 
 
 #: Parity-gated dataset map: ONLY datasets whose native-vs-community output
@@ -865,96 +825,7 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
 
 
 def _spec_for(dataset_id: str) -> DatasetSpec | None:
-    wanted = dataset_id.lower()
-    for spec in DATASET_SPECS:
-        if any(wanted == did.lower() for did in spec.dataset_ids):
-            return spec
-    return None
-
-
-# ── Shared helpers ───────────────────────────────────────────────────
-
-
-def _netcdf_encoding(ds: xr.Dataset) -> dict[str, dict[str, Any]]:
-    """Compressed per-variable encoding for ``ds.to_netcdf(encoding=...)``."""
-    return {str(name): {"zlib": True, "complevel": 1} for name in ds.data_vars}
-
-
-def _product_tag(product: str) -> str:
-    """Filesystem-safe tag for a CFS product id (``aorc:conus_1km`` → ``aorc_conus_1km``)."""
-    return re.sub(r"[^A-Za-z0-9]+", "_", product).strip("_").lower()
-
-
-def _cfg(config: Any, key: str, default: Any = None) -> Any:
-    """Flat config read working for dicts and SymfluenceConfig-like objects."""
-    if config is None:
-        return default
-    getter = getattr(config, "get", None)
-    if callable(getter):
-        value = getter(key, default)
-        return default if value is None else value
-    return default
-
-
-def _as_list(value: Any) -> list[str] | None:
-    """Coerce a config value (comma-string or list) into a list of names."""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        items = [v.strip() for v in value.split(",") if v.strip()]
-        return items or None
-    return [str(v) for v in value] or None
-
-
-def _derive_wind_speed(ds: xr.Dataset) -> xr.Dataset:
-    """Derive ``wind_speed`` from the wind primitives when absent.
-
-    Uses the same float32 op order as SYMFLUENCE's native ERA5 derivation:
-    ``((u**2 + v**2) ** 0.5).astype(float32)``. For RDRS/CaSR this composite
-    deviates <= 9e-4 m/s (max, exp10 measurement: 8.8e-4) from CaSR's own
-    ``sfcWind`` diagnostic — CaSR computes its wind speed upstream with
-    different physics-level rounding. Physically negligible; documented here
-    and in docs/symfluence.md rather than chased.
-    """
-    if "wind_speed" in ds.data_vars or not (
-        {"eastward_wind", "northward_wind"} <= set(ds.data_vars)
-    ):
-        return ds
-    u, v = ds["eastward_wind"], ds["northward_wind"]
-    wind = ((u**2 + v**2) ** 0.5).astype("float32")
-    wind.attrs = {"units": "m s-1", "long_name": "wind speed", "standard_name": "wind_speed"}
-    ds["wind_speed"] = wind
-    return ds
-
-
-def _add_native_era5_derivations(ds: xr.Dataset) -> xr.Dataset:
-    """Derive ``wind_speed`` / ``specific_humidity`` exactly like native SYMFLUENCE.
-
-    The native ERA5 acquisition pipeline (``handlers/era5_processing.py``)
-    ships these two derived variables in its raw files; CFS's ``era5_arco``
-    product ships only the primitives (u/v wind, dewpoint, pressure). To keep
-    the community files drop-in equivalent, the backend recomputes them with
-    the **same float32 op order as SYMFLUENCE** — live-verified bitwise equal
-    to the native output (2026-06-11 parity experiments). Do not "improve"
-    these formulas: bit-parity with the native pipeline is the contract.
-    """
-    import numpy as np
-    import xarray
-
-    ds = _derive_wind_speed(ds)
-    if "specific_humidity" not in ds.data_vars and {
-        "dewpoint_temperature",
-        "surface_air_pressure",
-    } <= set(ds.data_vars):
-        td_c = ds["dewpoint_temperature"] - 273.15
-        es = 611.2 * np.exp((17.67 * td_c) / (td_c + 243.5))
-        pressure = ds["surface_air_pressure"]
-        denom = xarray.where((pressure - es) <= 1.0, 1.0, pressure - es)
-        r = 0.622 * es / denom
-        q = (r / (1.0 + r)).astype("float32")
-        q.attrs = {"units": "kg kg-1", "long_name": "specific humidity", "standard_name": "specific_humidity"}
-        ds["specific_humidity"] = q
-    return ds
+    return find_spec(DATASET_SPECS, dataset_id)
 
 
 # ── The community acquisition backend ────────────────────────────────
