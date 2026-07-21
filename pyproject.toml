@@ -118,6 +118,12 @@ markers = [
     "network: tests requiring network access (deselect with '-m not network')",
 ]
 
+[tool.coverage.report]
+# Keep CI from silently accepting material coverage regressions. The current
+# offline suite reports about 55%; this intentionally tight ratchet makes
+# coverage an enforced contract while retaining roughly one point of margin.
+fail_under = 54
+
 [tool.mypy]
 # Target 3.12 so mypy can parse the PEP 695 `type` statement that numpy's 2.x
 # bundled stubs use (it rejects that syntax under a <3.12 target, which broke the
