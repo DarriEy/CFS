@@ -8,9 +8,22 @@ from cfs.health import SENTINELS, Sentinel, probe, run_sentinels
 
 def test_sentinels_cover_distinct_protocol_families():
     assert {item.protocol for item in SENTINELS} == {
-        "HTTP/file", "OPeNDAP DDS", "S3 ranged object", "Zarr v3 metadata",
+        "HTTP/file", "OPeNDAP DDS", "S3 ranged object", "Zarr consolidated metadata",
     }
     assert len({item.url for item in SENTINELS}) == len(SENTINELS)
+
+
+def test_probe_result_is_json_serializable():
+    # Regression: asdict(sentinel) once leaked the bytes signatures into the
+    # report, crashing json.dumps in the provider-health workflow.
+    import json
+
+    response = MagicMock(status=200)
+    response.__enter__.return_value = response
+    response.read.return_value = b"expected metadata"
+    with patch("cfs.health.urlopen", return_value=response):
+        result = probe(Sentinel("example", "HTTP", "https://example.test", (b"metadata",)))
+    json.dumps(result)
 
 
 def test_probe_success():

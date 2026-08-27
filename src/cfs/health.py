@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -37,9 +37,12 @@ SENTINELS = (
         (b":TMP:", b":surface:"), (("Range", "bytes=0-4095"),),
     ),
     Sentinel(
-        "Google ARCO ERA5", "Zarr v3 metadata",
-        "https://storage.googleapis.com/gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3/zarr.json",
-        (b'"zarr_format"', b'"node_type"'),
+        # The store is zarr v2 despite the "-v3" path suffix: probe its
+        # consolidated .zmetadata (a zarr.json would only exist in format 3).
+        "Google ARCO ERA5", "Zarr consolidated metadata",
+        "https://storage.googleapis.com/gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3/.zmetadata",
+        (b'"metadata"', b'".zattrs"'),
+        (("Range", "bytes=0-65535"),),
     ),
 )
 
@@ -60,8 +63,12 @@ def probe(sentinel: Sentinel, *, timeout: float = 20.0) -> dict[str, object]:
         status, ok, error = exc.code, False, f"HTTP {exc.code}"
     except (URLError, TimeoutError) as exc:
         status, ok, error = None, False, str(exc)
+    # Explicit fields only: asdict(sentinel) would leak the bytes signatures
+    # into the report, which json.dumps cannot serialize.
     return {
-        **asdict(sentinel),
+        "name": sentinel.name,
+        "protocol": sentinel.protocol,
+        "url": sentinel.url,
         "ok": ok,
         "status": status,
         "elapsed_ms": int((time.monotonic() - started) * 1000),
