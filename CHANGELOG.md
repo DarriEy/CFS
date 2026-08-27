@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dependency floors raised to the oldest working versions (verified by the
+  Dependency Matrix minimum-resolution job): `netcdf4>=1.7.1` and
+  `pandas>=2.2.2` (first numpy-2-ABI wheels), `pytest-asyncio>=0.23.5`
+  (pytest 8 collection).
+
+### Fixed
+
+- The daily provider-health workflow now installs the package before running
+  `python -m cfs.health`; the bare `PYTHONPATH=src` invocation crashed on the
+  package __init__'s imports, leaving the sentinel red every day.
+
 ## [0.6.0] — 2026-07-16
 
 ### Added
