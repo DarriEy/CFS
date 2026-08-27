@@ -45,7 +45,7 @@ climate = [
     # lacks py3.11 wheels and forces a source build needing HDF5 headers.
     "netcdf4>=1.7.1",
     "h5netcdf>=1.4",
-    "h5py>=3.11",  # first numpy-2-ABI wheels
+    "h5py>=3.12",  # bundled libhdf5 must match netCDF4 1.7.x wheels (1.14.4 line); 3.11 bundles 1.14.2 and poisons in-process HDF5
 ]
 cds = [
     "cdsapi>=0.7.2",
